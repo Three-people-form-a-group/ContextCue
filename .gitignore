@@ -1,0 +1,14 @@
+# build
+build/
+
+# IDE
+.idea/
+
+# Harmony dependencies
+oh_modules/
+
+# logs
+*.log
+
+# temporary files
+*.tmp

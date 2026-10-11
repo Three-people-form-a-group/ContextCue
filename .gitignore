@@ -1,12 +1,17 @@
-/node_modules
-/oh_modules
-/local.properties
-/.idea
-**/build
-/.hvigor
-.cxx
-/.clangd
-/.clang-format
-/.clang-tidy
-**/.test
-/.appanalyzer
+# Build output
+build/
+
+# IDE files
+.idea/
+
+# HarmonyOS dependencies
+oh_modules/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+
+# Node modules
+node_modules/

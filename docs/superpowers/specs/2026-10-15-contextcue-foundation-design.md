@@ -1,4 +1,4 @@
-# ContextCue 公共架构与 AI 模块基础设计
+# ContextCue 公共架构与 AI 模块开发规范 v1.0
 
 ## 1. 文档目的
 
@@ -13,7 +13,7 @@
 - 手动创建时间、地点、时间加地点提醒。
 - 使用自然语言解析提醒内容、时间、地点和触发类型。
 - 对 AI 结果进行结构、语义和必填字段校验。
-- 统一保存、查询、更新、完成、启停和删除 Reminder。
+- 统一保存、查询、更新、启用、禁用、触发、完成和删除 Reminder。
 - 通过时间和地点模块报告触发条件，并由统一入口决定是否发送系统通知。
 
 第一阶段明确不包含：
@@ -22,6 +22,9 @@
 - AI 自动替用户修正不确定信息并直接创建提醒。
 - 在 AI 模块中实现页面、时间调度、地理围栏或通知能力。
 - 在当前阶段拆分独立 HAR/HAP 业务模块。
+- 每日、每周、工作日或其他复杂重复规则。
+
+第一阶段所有 Reminder 均为一次性提醒，一个 Reminder 最多成功触发一次。周期提醒需要在后续单独设计 `RepeatRule`。
 
 ## 3. 架构决策
 
@@ -31,7 +34,7 @@
 - AI、页面、时间和定位代码分别位于独立目录。
 - 页面只调用服务，不直接访问仓储。
 - AI 只输出经过校验的创建输入，不直接保存 Reminder。
-- 时间与地点模块只管理各自的系统能力和条件事件，不分别决定联合提醒的最终通知。
+- 时间与地点模块只管理各自的系统能力和条件事件，TIME、LOCATION 和 BOTH 的最终通知都由 TriggerCoordinator 决定。
 - HarmonyOS 具体系统 API 必须在实现阶段以 API 24 工程中的实际 SDK 声明为准；未经核对的 API 不进入设计契约。
 
 依赖方向如下：
@@ -55,7 +58,9 @@ entry/src/main/ets/
 │  ├─ Reminder.ets
 │  ├─ ReminderEnums.ets
 │  ├─ CreateReminderInput.ets
-│  └─ OperationResult.ets
+│  ├─ Scene.ets
+│  ├─ OperationResult.ets
+│  └─ ReminderModelRules.ets
 ├─ repository/
 │  └─ ReminderRepository.ets
 ├─ service/
@@ -79,9 +84,11 @@ entry/src/main/ets/
 │  └─ notification/
 ├─ location/
 │  ├─ model/
+│  ├─ repository/
 │  ├─ service/
 │  └─ adapter/
 ├─ pages/
+├─ components/
 ├─ entryability/
 └─ entrybackupability/
 ```
@@ -103,7 +110,21 @@ export enum ReminderSource {
   MANUAL = 'MANUAL',
   AI = 'AI'
 }
+
+export enum ReminderStatus {
+  ACTIVE = 'ACTIVE',
+  TRIGGERED = 'TRIGGERED',
+  COMPLETED = 'COMPLETED',
+  DISABLED = 'DISABLED'
+}
+
+export enum LocationTriggerMode {
+  ENTER = 'ENTER',
+  EXIT = 'EXIT'
+}
 ```
+
+`TRIGGERED` 表示条件已满足且通知发送成功，`COMPLETED` 表示用户主动确认事项已经完成，两者不得合并。第一阶段地点提醒可以优先实现 `ENTER`，公共模型同时保留 `EXIT`。
 
 ### 5.2 持久化实体
 
@@ -115,14 +136,16 @@ export interface Reminder {
   triggerTime?: number
   sceneId?: string
   sceneName?: string
-  enabled: boolean
-  completed: boolean
+  locationTriggerMode?: LocationTriggerMode
+  status: ReminderStatus
   source: ReminderSource
   createdAt: number
+  triggeredAt?: number
+  completedAt?: number
 }
 ```
 
-`triggerTime` 和 `createdAt` 使用 Unix Epoch 毫秒值。相对时间解析必须显式使用解析上下文中的当前时间与时区，避免字符串格式和设备时区产生隐式差异。
+`triggerTime`、`createdAt`、`triggeredAt` 和 `completedAt` 使用 Unix Epoch 毫秒值。相对时间解析必须显式使用解析上下文中的当前时间与时区，避免字符串格式和设备时区产生隐式差异。
 
 `sceneId` 是定位模块的稳定引用；`sceneName` 是用于展示和 AI 匹配的名称快照。经纬度、半径和围栏参数不进入 Reminder，由定位模块持有。
 
@@ -135,11 +158,12 @@ export interface CreateReminderInput {
   triggerTime?: number
   sceneId?: string
   sceneName?: string
+  locationTriggerMode?: LocationTriggerMode
   source: ReminderSource
 }
 ```
 
-手动 UI 和 AI 都提交同一个 `CreateReminderInput`。`id`、`createdAt`、`enabled` 和 `completed` 由 `ReminderService` 统一生成，避免不同入口产生不同默认值。
+手动 UI 和 AI 都提交同一个 `CreateReminderInput`。`id`、`status`、`createdAt`、`triggeredAt` 和 `completedAt` 由 `ReminderService` 统一生成或维护，避免不同入口产生不同默认值。
 
 ### 5.4 数据不变量
 
@@ -147,10 +171,53 @@ export interface CreateReminderInput {
 - `TIME` 必须包含有效的 `triggerTime`。
 - `LOCATION` 在激活前必须包含可用的 `sceneId`。
 - `BOTH` 在激活前必须同时包含 `triggerTime` 和可用的 `sceneId`。
+- 存在地点条件时，正式 Reminder 必须包含 `locationTriggerMode`；创建输入缺省时由 ReminderService 统一补为 `ENTER`。
 - 只有 `sceneName` 而没有可解析 `sceneId` 的 AI 结果必须进入用户确认流程。
-- 已完成提醒必须处于禁用状态，即 `completed === true` 时 `enabled === false`。
 - 无法确认的过去时间不自动改写为未来时间。
 - 任何未通过校验的输入都不得写入 ReminderRepository。
+
+### 5.5 Scene 公共模型
+
+```ts
+export interface Scene {
+  id: string
+  name: string
+  latitude: number
+  longitude: number
+  radius: number
+  createdAt: number
+}
+```
+
+Reminder 只通过 `sceneId` 引用 Scene，并保留 `sceneName` 作为显示快照。Scene 的正式仓储、权限、定位、围栏和管理实现由地点模块负责人完成。
+
+### 5.6 纯逻辑模型规则
+
+阶段 1 增加 `model/ReminderModelRules.ets`，让模型不变量可以在 ReminderService 出现前被单元测试，并由后续 ReminderService 直接复用：
+
+```ts
+export function validateCreateReminderInput(
+  input: CreateReminderInput,
+  now: number
+): OperationError[]
+
+export function canTransitionReminderStatus(
+  current: ReminderStatus,
+  next: ReminderStatus
+): boolean
+```
+
+创建输入校验返回稳定错误码：`EMPTY_CONTENT`、`MISSING_TRIGGER_TIME`、`INVALID_TRIGGER_TIME`、`PAST_TRIGGER_TIME` 和 `MISSING_SCENE_ID`。TIME 和 BOTH 的 `triggerTime` 必须是有限数值且不得早于 `now`；LOCATION 和 BOTH 的 `sceneId` 去除首尾空白后不得为空。地点创建输入可以省略 `locationTriggerMode`，由 ReminderService 在正式创建时统一补为 `ENTER`。
+
+状态转换规则如下：
+
+- 相同状态允许作为幂等操作。
+- `ACTIVE` 可以进入 `TRIGGERED`、`COMPLETED` 或 `DISABLED`。
+- `DISABLED` 可以重新进入 `ACTIVE`，也可以由用户标记为 `COMPLETED`。
+- `TRIGGERED` 只能进入 `COMPLETED`。
+- `COMPLETED` 是终态，不能重新激活、禁用或触发。
+
+模型规则只判断纯领域条件，不读写仓储、不注册系统任务，也不调用 HarmonyOS API。
 
 ## 6. AI 模块
 
@@ -230,7 +297,8 @@ ReminderService 是创建和修改 Reminder 的唯一公共入口，职责包括
 - 生成 ID、创建时间和生命周期默认值。
 - 保存 Reminder。
 - 根据变化同步时间与地点触发端口。
-- 完成、启停和删除提醒。
+- 更新、启用、禁用、用户完成和删除提醒。
+- 维护 `ACTIVE`、`TRIGGERED`、`COMPLETED` 和 `DISABLED` 生命周期。
 - 在仓储或触发端口失败时返回明确错误，不静默吞掉异常。
 
 页面、AI、时间和定位模块都不得绕过 ReminderService 直接修改 Reminder 状态。
@@ -312,6 +380,8 @@ export interface ReminderNotificationPort {
 
 `SceneResolveResult` 区分唯一匹配、多个候选和未找到三种结果；只有 `RESOLVED` 能够自动补充 `sceneId`，其余结果进入用户确认流程。地点事件必须同时上报进入和离开状态，协调器不得把一次历史进入事件永久视为地点条件满足；在时间条件到达时可通过 `isInsideScene` 重新确认当前状态。
 
+TIME、LOCATION 和 BOTH 三种提醒都必须统一经过 TriggerCoordinator，时间模块和地点模块只上报条件变化，不得直接决定或发送最终通知。
+
 `BOTH` 固定为 AND 语义，并使用以下规则：
 
 - 时间条件在 `triggerTime` 到达后打开，并保持为已满足。
@@ -319,9 +389,11 @@ export interface ReminderNotificationPort {
 - 如果用户在 `triggerTime` 到达时已经位于目标场景，协调器可立即触发。
 - 如果时间到达时用户不在目标场景，则等待之后进入目标场景再触发。
 - 位置在时间到达前曾经满足、但到达时已经离开，不视为联合条件满足。
-- 每个 Reminder 最多发送一次最终通知，成功触发后由统一服务更新完成或禁用状态。
+- 每个 Reminder 最多发送一次最终通知，通知成功后状态从 `ACTIVE` 更新为 `TRIGGERED` 并记录 `triggeredAt`。
 
-因此时间模块和定位模块不能各自直接发送 `BOTH` 通知。二者只上报条件事件，最终决定由统一 TriggerCoordinator 完成。
+通知成功不等于用户完成事项，不能自动更新为 `COMPLETED`。只有用户主动确认完成后，ReminderService 才把状态更新为 `COMPLETED` 并记录 `completedAt`。
+
+因此时间模块和定位模块不能各自直接发送 TIME、LOCATION 或 BOTH 通知。三种类型的最终决定都由统一 TriggerCoordinator 完成。
 
 ## 9. 错误处理
 
@@ -332,7 +404,7 @@ export interface ReminderNotificationPort {
 - Reminder 输入错误：由 ReminderService 拒绝并返回字段级错误。
 - Repository 错误：保留原状态，不报告创建成功。
 - 时间或位置注册错误：Reminder 不得表现为已成功启用；服务返回可恢复错误。
-- 通知错误：不把 Reminder 标记为已完成或已禁用；返回可重试错误并记录脱敏日志。自动重试频率不属于本次公共基础实现。
+- 通知错误：不得把 Reminder 标记为 `TRIGGERED`；返回可重试错误并记录脱敏日志。自动重试频率不属于本次公共基础实现。
 
 日志不得输出凭证、完整供应商请求头或其他敏感配置。
 
@@ -342,8 +414,8 @@ export interface ReminderNotificationPort {
 |---|---|---|
 | `model/**`、`repository/**`、`service/**` | 贾宇璠 | 公共契约，变更前同步并由组长合并 |
 | `ai/**` | 贾宇璠 | 不包含 UI、时间或定位实现 |
-| `pages/**`、`reminder/time/**` | 罗鸿程 | 通过公共服务和端口接入 |
-| `location/**` | 兰铮 | 不直接修改 ReminderRepository |
+| `pages/**`、`components/**`、`reminder/time/**`、`reminder/notification/**` | 罗鸿程 | 通过公共服务和端口接入；负责正式时间调度和通知实现 |
+| `location/**` | 兰铮 | 负责 Scene、定位和围栏正式实现；不直接修改 ReminderRepository |
 | `reminder/contract/**`、`reminder/TriggerCoordinator.ets` | 公共，贾宇璠审核 | 接口变更需通知三人 |
 | `EntryAbility.ets` | 集成入口 | 仅在整合阶段集中修改 |
 | `module.json5`、根与 entry 的构建配置 | 公共配置 | 权限或依赖按独立 PR 修改 |
@@ -359,7 +431,29 @@ export interface ReminderNotificationPort {
 - `.hvigor/`、`local.properties`、构建产物和包含本地凭证的配置不得提交。
 - 当前根 `.gitignore` 尚未覆盖 `.hvigor/` 和 `local.properties`，应在公共基础阶段作为独立的小修改补齐。
 
-## 12. 验证策略
+## 12. 实现职责限制
+
+组长在 `feature-ai` 上正式实现的范围为：
+
+- `model/**`
+- `repository/**`
+- `service/**`
+- `ai/**`
+- `reminder/contract/**`
+- `reminder/TriggerCoordinator.ets`
+- 为接口验证所需的 Fake、Mock、Stub 和测试
+
+以下内容只允许定义公共接口或测试替身，不由组长实现正式 HarmonyOS 能力：
+
+- 完整 ArkUI 页面和组件
+- 时间调度系统能力
+- HarmonyOS Notification 具体实现
+- 定位权限、Location Kit、地理围栏和后台地点事件
+- Scene 正式仓储与管理实现
+
+对应正式实现分别由 UI/时间/通知负责人和地点负责人在各自 feature 分支完成。
+
+## 13. 验证策略
 
 每个实现阶段完成后执行：
 
@@ -370,9 +464,9 @@ export interface ReminderNotificationPort {
 
 当前基线已通过 ArkTS 编译和 `assembleHap`，可生成 `entry-default-unsigned.hap`。因未配置签名，产物为未签名 HAP。
 
-## 13. 小步实施顺序
+## 14. 小步实施顺序
 
-1. 建立公共 Reminder、创建输入、结果类型和数据校验。
+1. 建立 TriggerType、ReminderSource、ReminderStatus、LocationTriggerMode、Reminder、Scene、CreateReminderInput、OperationResult 和纯逻辑模型规则，并编写模型测试。
 2. 建立 ReminderRepository 与 ReminderService 契约，并使用内存实现验证业务流程。
 3. 建立 AIService、Fake Provider、解析、校验和映射流程，不调用真实 API。
 4. 建立时间、地点、触发事件和通知端口，供另外两位成员并行实现。

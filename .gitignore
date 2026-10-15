@@ -1,6 +1,10 @@
 # Build output
 build/
 
+# HarmonyOS local build state
+.hvigor/
+local.properties
+
 # IDE files
 .idea/
 

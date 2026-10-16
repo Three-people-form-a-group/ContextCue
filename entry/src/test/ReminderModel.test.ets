@@ -9,6 +9,7 @@ import {
   TriggerType
 } from '../main/ets/model/ReminderEnums';
 import { Scene } from '../main/ets/model/Scene';
+import { validateCreateReminderInput } from '../main/ets/model/ReminderModelRules';
 
 export default function reminderModelTest() {
   describe('reminderModelTest', () => {
@@ -106,6 +107,69 @@ export default function reminderModelTest() {
       expect(failureResult.error?.code).assertEqual('INVALID_INPUT');
       expect(failureResult.error?.field).assertEqual('content');
       expect(failureResult.error?.retryable).assertFalse();
+    });
+
+    it('accepts valid time location and both inputs at the time boundary', 0, () => {
+      const time: CreateReminderInput = { content: 'a', triggerType: TriggerType.TIME, triggerTime: 1000, source: ReminderSource.MANUAL };
+      const location: CreateReminderInput = { content: 'a', triggerType: TriggerType.LOCATION, sceneId: 'scene', source: ReminderSource.MANUAL };
+      const both: CreateReminderInput = { content: 'a', triggerType: TriggerType.BOTH, triggerTime: 1001, sceneId: 'scene', source: ReminderSource.AI };
+      expect(validateCreateReminderInput(time, 1000).length).assertEqual(0);
+      expect(validateCreateReminderInput(location, 1000).length).assertEqual(0);
+      expect(validateCreateReminderInput(both, 1000).length).assertEqual(0);
+    });
+
+    it('reports empty content and both missing conditions in stable order', 0, () => {
+      const input: CreateReminderInput = { content: '  ', triggerType: TriggerType.BOTH, source: ReminderSource.AI };
+      const errors = validateCreateReminderInput(input, 1000);
+      expect(errors.length).assertEqual(3);
+      expect(errors[0].code).assertEqual('EMPTY_CONTENT');
+      expect(errors[0].field).assertEqual('content');
+      expect(errors[1].code).assertEqual('MISSING_TRIGGER_TIME');
+      expect(errors[2].code).assertEqual('MISSING_SCENE_ID');
+      expect(errors[0].retryable).assertFalse();
+    });
+
+    it('rejects missing invalid and past times', 0, () => {
+      const input: CreateReminderInput = { content: 'a', triggerType: TriggerType.TIME, source: ReminderSource.MANUAL };
+      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('MISSING_TRIGGER_TIME');
+      input.triggerTime = Number.NaN;
+      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('INVALID_TRIGGER_TIME');
+      input.triggerTime = Number.POSITIVE_INFINITY;
+      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('INVALID_TRIGGER_TIME');
+      input.triggerTime = Number.NEGATIVE_INFINITY;
+      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('INVALID_TRIGGER_TIME');
+      input.triggerTime = 999;
+      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('PAST_TRIGGER_TIME');
+    });
+
+    it('requires a nonblank scene id even when a scene name exists', 0, () => {
+      const input: CreateReminderInput = { content: 'a', triggerType: TriggerType.LOCATION, sceneName: '实验室', source: ReminderSource.AI };
+      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('MISSING_SCENE_ID');
+      input.sceneId = '  ';
+      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('MISSING_SCENE_ID');
+    });
+
+    it('rejects fields inconsistent with trigger type', 0, () => {
+      const input: CreateReminderInput = { content: 'a', triggerType: TriggerType.TIME, triggerTime: 1000, source: ReminderSource.MANUAL };
+      input.sceneId = 'scene';
+      expect(validateCreateReminderInput(input, 1000)[0].field).assertEqual('sceneId');
+      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('INCONSISTENT_TRIGGER_FIELDS');
+      input.sceneId = undefined;
+      input.sceneName = '实验室';
+      expect(validateCreateReminderInput(input, 1000)[0].field).assertEqual('sceneName');
+      input.sceneName = undefined;
+      input.locationTriggerMode = LocationTriggerMode.ENTER;
+      expect(validateCreateReminderInput(input, 1000)[0].field).assertEqual('locationTriggerMode');
+      const location: CreateReminderInput = { content: 'a', triggerType: TriggerType.LOCATION, sceneId: 'scene', triggerTime: 1000, source: ReminderSource.MANUAL };
+      expect(validateCreateReminderInput(location, 1000)[0].field).assertEqual('triggerTime');
+      expect(validateCreateReminderInput(location, 1000)[0].code).assertEqual('INCONSISTENT_TRIGGER_FIELDS');
+    });
+
+    it('rejects EXIT for location and both', 0, () => {
+      const location: CreateReminderInput = { content: 'a', triggerType: TriggerType.LOCATION, sceneId: 'scene', locationTriggerMode: LocationTriggerMode.EXIT, source: ReminderSource.MANUAL };
+      const both: CreateReminderInput = { content: 'a', triggerType: TriggerType.BOTH, triggerTime: 1000, sceneId: 'scene', locationTriggerMode: LocationTriggerMode.EXIT, source: ReminderSource.AI };
+      expect(validateCreateReminderInput(location, 1000)[0].code).assertEqual('UNSUPPORTED_LOCATION_TRIGGER_MODE');
+      expect(validateCreateReminderInput(both, 1000)[0].code).assertEqual('UNSUPPORTED_LOCATION_TRIGGER_MODE');
     });
   });
 }

@@ -24,6 +24,7 @@ class TestTimePort implements TimeTriggerPort {
   scheduled: string[] = [];
   cancelled: string[] = [];
   failSchedule: boolean = false;
+  failCancel: boolean = false;
 
   async schedule(reminder: Reminder): Promise<void> {
     if (this.failSchedule) {
@@ -33,6 +34,9 @@ class TestTimePort implements TimeTriggerPort {
   }
 
   async cancel(reminderId: string): Promise<void> {
+    if (this.failCancel) {
+      throw new Error('cancel failed');
+    }
     this.cancelled.push(reminderId);
   }
 }
@@ -41,6 +45,7 @@ class TestLocationPort implements LocationTriggerPort {
   registered: string[] = [];
   unregistered: string[] = [];
   failRegister: boolean = false;
+  failUnregister: boolean = false;
 
   async register(reminder: Reminder): Promise<void> {
     if (this.failRegister) {
@@ -50,6 +55,9 @@ class TestLocationPort implements LocationTriggerPort {
   }
 
   async unregister(reminderId: string): Promise<void> {
+    if (this.failUnregister) {
+      throw new Error('unregister failed');
+    }
     this.unregistered.push(reminderId);
   }
 
@@ -138,6 +146,73 @@ export default function reminderServiceTest() {
       expect(time.cancelled[0]).assertEqual('r-5');
       expect(location.unregistered[0]).assertEqual('r-5');
       expect(await repository.findById('r-5')).assertUndefined();
+    });
+
+    it('disables and re-enables while same-status calls are true no-ops', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-6');
+      await service.create(timeInput());
+      expect((await service.disable('r-6')).data?.status).assertEqual(ReminderStatus.DISABLED);
+      expect(time.cancelled.length).assertEqual(1);
+      expect(location.unregistered.length).assertEqual(1);
+      const savesAfterDisable = repository.saves;
+      expect((await service.disable('r-6')).success).assertTrue();
+      expect(repository.saves).assertEqual(savesAfterDisable);
+      expect(time.cancelled.length).assertEqual(1);
+      expect(location.unregistered.length).assertEqual(1);
+      expect((await service.enable('r-6')).data?.status).assertEqual(ReminderStatus.ACTIVE);
+      expect(time.scheduled.length).assertEqual(2);
+      const savesAfterEnable = repository.saves;
+      expect((await service.enable('r-6')).success).assertTrue();
+      expect(repository.saves).assertEqual(savesAfterEnable);
+      expect(time.scheduled.length).assertEqual(2);
+    });
+
+    it('marks notification success before cleanup and retries cleanup without a second state write', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-7');
+      await service.create(timeInput());
+      location.failUnregister = true;
+      const result = await service.markTriggered('r-7', 2500);
+      expect(result.success).assertFalse();
+      expect(result.error?.code).assertEqual('TRIGGER_CLEANUP_ERROR');
+      expect(result.data?.status).assertEqual(ReminderStatus.TRIGGERED);
+      expect(result.data?.triggeredAt).assertEqual(2500);
+      expect((await repository.findById('r-7'))?.status).assertEqual(ReminderStatus.TRIGGERED);
+      const savesAfterTrigger = repository.saves;
+      expect((await service.markTriggered('r-7', 3000)).success).assertTrue();
+      expect(repository.saves).assertEqual(savesAfterTrigger);
+      expect((await repository.findById('r-7'))?.triggeredAt).assertEqual(2500);
+      location.failUnregister = false;
+      expect((await service.retryTriggerCleanup('r-7')).success).assertTrue();
+      expect(repository.saves).assertEqual(savesAfterTrigger);
+    });
+
+    it('completes a triggered reminder but never re-enables it', 0, async () => {
+      const repository = new TestRepository();
+      const service = new ReminderService(repository, new TestTimePort(), new TestLocationPort(), () => 3000, () => 'r-8');
+      const reminder: Reminder = { id: 'r-8', content: '带电脑', triggerType: TriggerType.TIME, triggerTime: 2000, status: ReminderStatus.TRIGGERED, source: ReminderSource.MANUAL, createdAt: 1000, triggeredAt: 2500 };
+      await repository.save(reminder);
+      expect((await service.complete('r-8')).data?.completedAt).assertEqual(3000);
+      expect((await service.enable('r-8')).error?.code).assertEqual('INVALID_STATUS_TRANSITION');
+      expect((await repository.findById('r-8'))?.status).assertEqual(ReminderStatus.COMPLETED);
+      expect((await service.complete('r-8')).data?.completedAt).assertEqual(3000);
+    });
+
+    it('keeps ACTIVE when ordinary cleanup fails and reports missing IDs', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const service = new ReminderService(repository, time, new TestLocationPort(), () => 1000, () => 'r-9');
+      await service.create(timeInput());
+      time.failCancel = true;
+      const result = await service.disable('r-9');
+      expect(result.error?.code).assertEqual('TRIGGER_CLEANUP_ERROR');
+      expect((await repository.findById('r-9'))?.status).assertEqual(ReminderStatus.ACTIVE);
+      expect((await service.disable('missing')).error?.code).assertEqual('REMINDER_NOT_FOUND');
     });
   });
 }

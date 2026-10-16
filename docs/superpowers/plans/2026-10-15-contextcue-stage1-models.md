@@ -1,6 +1,6 @@
 # ContextCue Stage 1 Public Models Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Execute this plan task by task: 建议按 Task 逐项执行，每完成一个 Task 后执行验证并提交。Steps use checkbox (`- [ ]`) syntax for tracking. If the current execution environment supports plan-execution or subagent tools, they may be used, but they are not required to implement this plan. Small steps, task-by-task execution, RED-GREEN-REFACTOR, and per-task verification are the required working style; no specific plugin, skill, or agent tool is a prerequisite. Codex, DSH, or any other development agent can execute this plan directly.
 
 **Goal:** Implement ContextCue's shared Reminder/Scene types, deterministic creation-input validation, lifecycle transition rules, and ArkTS unit tests without implementing UI or HarmonyOS system capabilities.
 
@@ -14,7 +14,7 @@
 
 - Work only on `feature-ai`; do not modify `main`, `develop`, `feature-ui`, or `feature-location`.
 - Keep the application as one `entry` module compatible with HarmonyOS 6.1.1 (API 24).
-- Do not implement ArkUI pages, time scheduling, notifications, location, geofencing, or Scene persistence/management.
+- Do not implement or stub `ReminderRepository`, `ReminderService`, `AIService`, any AI provider, `TriggerCoordinator`, ArkUI pages, time scheduling, notifications, Location Kit, geofencing, `SceneRepository`, `SceneService`, Scene CRUD, or any location business implementation; these belong to later stages.
 - Do not add a real AI provider or any API key, secret, token, password, or local credential file.
 - All Reminder instances are one-shot reminders; trigger success and user completion remain distinct states.
 - Use Unix Epoch milliseconds for all domain timestamps.
@@ -22,6 +22,8 @@
 - Run all commands from `E:\HarmonyProjects\ContextCue`.
 
 ## Verification Commands
+
+以下 DevEco Studio、SDK、JBR 和 Hvigor 路径仅对应贾宇璠当前 `feature-ai` 开发机环境，用于本阶段本机验证，不代表团队其他成员必须采用相同磁盘目录。其他成员应使用各自机器上的实际 DevEco Studio / SDK 路径。
 
 Unit tests:
 
@@ -44,6 +46,8 @@ $env:PATH = "$env:JAVA_HOME/bin;$env:PATH"
 ## Review Focus
 
 - Whitespace-only content must yield `EMPTY_CONTENT`; pinned by Task 3.
+- Location trigger fields on `TIME`, or a `triggerTime` on `LOCATION`, must yield `INCONSISTENT_TRIGGER_FIELDS`; pinned by Task 3.
+- An explicit `LocationTriggerMode.EXIT` on `LOCATION` or `BOTH` must yield `UNSUPPORTED_LOCATION_TRIGGER_MODE`; pinned by Task 3.
 - BOTH with neither condition must report both `MISSING_TRIGGER_TIME` and `MISSING_SCENE_ID`, not stop after the first error; pinned by Task 3.
 - A finite `triggerTime` equal to `now` is valid, while non-finite or earlier values are rejected; pinned by Task 3.
 - `sceneName` without a nonblank `sceneId` cannot activate LOCATION or BOTH; pinned by Task 3.
@@ -54,25 +58,13 @@ $env:PATH = "$env:JAVA_HOME/bin;$env:PATH"
 ### Task 1: Protect Local Build and Configuration Files
 
 **Files:**
-- Modify: `.gitignore`
+- Inspect, and only modify if coverage is missing: `.gitignore`
 
 **Interfaces:**
 - Consumes: Existing project-local `.hvigor/` directory and `local.properties` file.
-- Produces: Git ignore rules that keep both local paths out of future commits.
+- Produces: Confirmed coverage of both local paths, or minimal missing ignore rules that keep them out of future commits.
 
-- [ ] **Step 1: Add repository-root ignore entries**
-
-Add exactly:
-
-```gitignore
-# HarmonyOS local build state
-.hvigor/
-local.properties
-```
-
-Keep the existing `build/`, `.idea/`, `oh_modules/`, `node_modules/`, log, and temporary-file rules.
-
-- [ ] **Step 2: Verify both current paths are ignored**
+- [ ] **Step 1: Check whether both paths are already ignored**
 
 Run:
 
@@ -80,9 +72,23 @@ Run:
 git check-ignore -v .hvigor local.properties
 ```
 
-Expected: two lines whose matching rules come from the repository-root `.gitignore`.
+Expected: both paths are covered by effective ignore rules. The rules may come from the existing `.gitignore`; they are not required to come from a new repository-root rule added in this task.
 
-- [ ] **Step 3: Verify the tracked diff contains only the intended ignore rules**
+- [ ] **Step 2: Add only rules that are actually missing**
+
+If both paths are already ignored by reasonable rules, do not modify `.gitignore` at all.
+
+If a path is not ignored, add only the missing rule(s) to the repository root `.gitignore`:
+
+```gitignore
+# HarmonyOS local build state
+.hvigor/
+local.properties
+```
+
+Do not add duplicate rules, and keep the existing `build/`, `.idea/`, `oh_modules/`, `node_modules/`, log, and temporary-file rules.
+
+- [ ] **Step 3: Verify the tracked diff contains only intended changes (only if `.gitignore` was modified)**
 
 Run:
 
@@ -93,12 +99,14 @@ git diff -- .gitignore
 
 Expected: no whitespace errors and no unrelated `.gitignore` changes.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Commit, only if `.gitignore` was actually modified**
 
 ```powershell
 git add -- .gitignore
 git commit -m "chore: ignore HarmonyOS local files"
 ```
+
+If the existing rules already cover both paths, do not modify or commit anything just to create a commit.
 
 ### Task 2: Define Shared Enums and Data Contracts
 
@@ -131,7 +139,7 @@ Also construct typed TIME, LOCATION, and BOTH `Reminder` values, a `Scene`, an A
 
 Run the Unit tests command from **Verification Commands**.
 
-Expected: FAIL during ArkTS unit-test compilation because the new `model` modules do not exist. This is the expected missing-feature failure, not an import typo.
+Expected: FAIL during ArkTS unit-test compilation because the new `model` modules do not exist. A valid RED must be caused by the not-yet-implemented feature actually being absent. Failures caused by wrong import paths, ArkTS syntax errors, pre-existing failing tests, DevEco SDK configuration, Hvigor configuration, or test-environment problems are not valid RED: fix the environment or test error first, then continue this task. Never treat any compile failure as a normal TDD RED.
 
 - [ ] **Step 3: Implement the minimal type declarations**
 
@@ -175,26 +183,32 @@ Add focused Hypium tests with deterministic `now = 1_000` that assert:
 - Valid TIME (`triggerTime = 1_001`), LOCATION (nonblank `sceneId`), and BOTH inputs return no errors.
 - Whitespace-only content returns `EMPTY_CONTENT` on field `content`.
 - TIME without `triggerTime` returns `MISSING_TRIGGER_TIME`.
-- `Number.NaN` or positive infinity returns `INVALID_TRIGGER_TIME`.
+- `Number.NaN`, positive infinity, or `Number.NEGATIVE_INFINITY` returns `INVALID_TRIGGER_TIME`.
 - `triggerTime = 999` returns `PAST_TRIGGER_TIME`, while `triggerTime = 1_000` is accepted.
 - LOCATION with only `sceneName` or a whitespace-only `sceneId` returns `MISSING_SCENE_ID`.
 - BOTH with neither `triggerTime` nor `sceneId` returns both missing-field errors in that order.
+- TIME carrying `sceneId`, `sceneName`, or `locationTriggerMode` returns `INCONSISTENT_TRIGGER_FIELDS` naming the offending field.
+- LOCATION carrying `triggerTime` returns `INCONSISTENT_TRIGGER_FIELDS` naming the offending field.
+- LOCATION or BOTH with `locationTriggerMode = LocationTriggerMode.EXIT` returns `UNSUPPORTED_LOCATION_TRIGGER_MODE`.
+- Missing `locationTriggerMode` on LOCATION and BOTH remains accepted at this layer.
 
 - [ ] **Step 2: Run the unit suite and verify RED**
 
 Run the Unit tests command from **Verification Commands**.
 
-Expected: FAIL during ArkTS unit-test compilation because `validateCreateReminderInput` is not implemented.
+Expected: FAIL during ArkTS unit-test compilation because `validateCreateReminderInput` is not implemented. A valid RED must be caused by the not-yet-implemented feature actually being absent. Failures caused by wrong import paths, ArkTS syntax errors, pre-existing failing tests, DevEco SDK configuration, Hvigor configuration, or test-environment problems are not valid RED: fix the environment or test error first, then continue this task. Never treat any compile failure as a normal TDD RED.
 
 - [ ] **Step 3: Implement `validateCreateReminderInput`**
 
-Implement the exact signature from the Interfaces block. Accumulate errors in stable order: content, time, then scene. Return `OperationError` values with the exact codes from the tests, matching `field`, a user-displayable message, and `retryable: false`.
+Implement the exact signature from the Interfaces block. Accumulate errors in stable order without stopping at the first error: content, field consistency, time, then scene, then location trigger mode. Return `OperationError` values with the exact codes from the tests, matching `field`, a user-displayable message, and `retryable: false`.
 
 Validation behavior:
 
-- TIME/BOTH require a finite `triggerTime` greater than or equal to `now`.
+- `TIME` must not carry location trigger fields (`sceneId`, `sceneName`, `locationTriggerMode`); `LOCATION` must not carry `triggerTime`. Violations return `INCONSISTENT_TRIGGER_FIELDS` and name the offending field. `BOTH` must carry both condition field groups.
+- TIME/BOTH require a finite `triggerTime` greater than or equal to `now`; `NaN`, `Infinity`, and `Number.NEGATIVE_INFINITY` are invalid.
 - LOCATION/BOTH require a nonblank `sceneId`; `sceneName` never substitutes for it.
-- Missing `locationTriggerMode` is accepted at this layer because ReminderService will default it to `ENTER` in Stage 3.
+- A missing `locationTriggerMode` is accepted at this layer and defaulted to `ENTER` by the later ReminderService implementation.
+- An explicit `LocationTriggerMode.EXIT` is rejected in Stage 1 with `UNSUPPORTED_LOCATION_TRIGGER_MODE`; `EXIT` stays a model-level reservation and is not implemented in V1.
 
 - [ ] **Step 4: Run the full unit suite and verify GREEN**
 
@@ -233,7 +247,7 @@ Add parameterized or individually named tests proving:
 
 Run the Unit tests command from **Verification Commands**.
 
-Expected: FAIL during ArkTS unit-test compilation because `canTransitionReminderStatus` is not exported.
+Expected: FAIL during ArkTS unit-test compilation because `canTransitionReminderStatus` is not exported. A valid RED must be caused by the not-yet-implemented feature actually being absent. Failures caused by wrong import paths, ArkTS syntax errors, pre-existing failing tests, DevEco SDK configuration, Hvigor configuration, or test-environment problems are not valid RED: fix the environment or test error first, then continue this task. Never treat any compile failure as a normal TDD RED.
 
 - [ ] **Step 3: Implement `canTransitionReminderStatus`**
 
@@ -283,10 +297,27 @@ git status --short --branch
 rg -n -i "api[_-]?key|authorization|secret|token|password" entry/src/main/ets
 ```
 
-Expected: no whitespace errors; no uncommitted source changes; no credential-like source matches; branch remains `feature-ai`.
+If `rg` is not installed, run the equivalent search with PowerShell instead:
+
+```powershell
+Get-ChildItem -Recurse entry/src/main/ets -File | Select-String -Pattern "api[_-]?key|authorization|secret|token|password"
+```
+
+Expected: no whitespace errors; no uncommitted source changes; branch remains `feature-ai`. For the credential scan, review every match and confirm that no real API key, secret, token, password, authorization header, or other valid credential is present. Type names, variable names, error codes, interface fields, or comment text that do not contain real credential values are acceptable; zero matches is fine but not required.
 
 - [ ] **Step 4: Report the phase result and stop**
 
 Report added and modified files, unit-test and debug-build evidence, any unsigned-packaging warning, and the explicitly unimplemented areas: Repository, ReminderService, AI, TriggerCoordinator, UI, time scheduling, notification, location, geofencing, and Scene management.
 
 Wait for user confirmation before starting the ReminderRepository phase.
+
+## Revision Notes
+
+- `.gitignore` changed to check-first and add only missing rules.
+- Removed the Superpowers REQUIRED hard dependency.
+- Credential scan changed to review matches instead of requiring zero matches.
+- Unified the criteria for a valid RED.
+- Noted that the DevEco paths apply only to 贾宇璠's current development machine.
+- Task 3 now also pins `INCONSISTENT_TRIGGER_FIELDS` and `UNSUPPORTED_LOCATION_TRIGGER_MODE`, plus `Number.NEGATIVE_INFINITY`.
+- Credential scan gained a PowerShell `Select-String` fallback when `rg` is unavailable.
+- Removed the "Stage 3" wording for the `ENTER` default.

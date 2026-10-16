@@ -183,6 +183,7 @@ export interface CreateReminderInput {
 ### 5.4 数据不变量
 
 - `content` 去除首尾空白后不能为空。
+- `ReminderService` 在构造正式 Reminder 前，对 `content` 和存在的 `sceneId` 去除首尾空白；仓储保存规范化后的值。
 - 字段组合必须与 `triggerType` 一致，违反组合一致性时返回 `INCONSISTENT_TRIGGER_FIELDS`，并在 `field` 中标明冗余字段：
   - `TIME` 不得携带地点触发字段（`sceneId`、`sceneName`、`locationTriggerMode`）。
   - `LOCATION` 不得携带 `triggerTime`。
@@ -337,6 +338,8 @@ export interface ReminderRepository {
 
 仓储只负责数据读写，不负责 AI 解析、调度、围栏或通知。仓储也不负责判断 Reminder 状态转换是否合法、是否允许启用、是否允许完成、是否应该注册时间任务或地点任务。这些业务规则由 `ReminderService` 与 `ReminderModelRules` 负责。
 
+当前公共服务阶段使用内存仓储验证流程；它不承诺进程重启后的持久化。后续正式持久化适配器仍遵守同一个 Repository 契约。
+
 ### 7.2 ReminderService
 
 ReminderService 是创建和修改 Reminder 的唯一公共入口，职责包括：
@@ -368,6 +371,8 @@ export interface OperationResult<T> {
 }
 ```
 
+V1 的 Service 错误码固定为 `REMINDER_NOT_FOUND`、`INVALID_STATUS_TRANSITION`（不可重试），以及 `REPOSITORY_ERROR`、`TRIGGER_REGISTRATION_ERROR`、`TRIGGER_CLEANUP_ERROR`（可重试）。输入字段错误继续使用 `ReminderModelRules` 的现有错误码。
+
 ### 7.3 创建/启用与 Trigger 注册的一致性
 
 创建或启用 Reminder 是一个完整业务操作。只有同时满足下面两点，`ReminderService` 才能向上层报告“创建/启用成功”：
@@ -381,7 +386,9 @@ export interface OperationResult<T> {
 - `LOCATION`：需要地点 Trigger 注册成功。
 - `BOTH`：需要时间和地点两个 Trigger 都注册成功。
 
-如果其中任一步失败，不得让 Reminder 最终保持为“看起来 `ACTIVE` 但实际上不会触发”的状态，必须执行必要的补偿或回滚：如果前面已经成功注册了部分 Trigger，而后续步骤失败，应取消已完成的注册，并向调用方返回可恢复错误。本规范不要求引入数据库事务系统或复杂事务框架，只规定最终状态必须一致。
+如果其中任一步失败，不得让 Reminder 最终保持为“看起来 `ACTIVE` 但实际上不会触发”的状态，必须执行必要的补偿或回滚：如果前面已经成功注册了部分 Trigger，而后续步骤失败，应取消已完成的注册，并向调用方返回可恢复错误。本规范不要求引入数据库事务系统或复杂事务框架。补偿自身也可能失败；本阶段只能尽力恢复并返回可重试错误，不能声称已完全一致，后续正式适配器仍需设计残留 Trigger 的恢复机制。
+
+创建顺序固定为：校验输入、在内存中构造最终 ACTIVE Reminder、注册所需 Trigger、最后只调用一次 `repository.save(ACTIVE Reminder)`。注册失败时取消此前成功的注册且不写仓储；最终保存失败时取消本次注册，失败的创建不得留下临时 DISABLED 记录。`DISABLED` 仅表示真实提醒被禁用，不作为创建过程中的过渡状态。
 
 ### 7.4 Reminder 生命周期与 Trigger 同步规则
 
@@ -391,11 +398,19 @@ Reminder 的 Trigger 注册状态必须跟随 `status` 变化，并且只能由 
 - 重新启用（`DISABLED` → `ACTIVE`）：按当前条件重新注册。
 - 禁用（`ACTIVE` → `DISABLED`）：必须 `cancel` 时间调度并 `unregister` 地点监听。
 - 用户完成（→ `COMPLETED`）：必须 `cancel` 并 `unregister`，终态不保留任何 Trigger 注册。
-- 触发成功（→ `TRIGGERED`）：`cancel` 时间调度并 `unregister` 地点监听；Reminder 记录保留，等待用户确认完成。一次性提醒不得保留第二次触发的注册。
+- 触发成功（→ `TRIGGERED`）：通知已经发送，先保存 `TRIGGERED` 和 `triggeredAt`，再 `cancel` 时间调度并 `unregister` 地点监听；Reminder 记录保留，等待用户确认完成。清理失败时不得回写 ACTIVE；返回可重试的清理错误，并携带已持久化的 TRIGGERED Reminder 供调用方识别。一次性提醒不得保留第二次触发的注册。
 - 编辑：先按旧条件 `cancel` / `unregister`，再按新条件注册；`TriggerType` 改变时同时清理另一类注册。
 - 删除：先 `cancel` / `unregister`，再删除仓储记录；清理失败时不得报告删除成功，返回可恢复错误。
-- 任一步注册或清理失败时，`ReminderService` 不得把 Reminder 表现为已按目标状态生效，必须返回明确错误（见第 9 节）。
+- 普通创建、启用、禁用、完成、编辑或删除中的注册/清理失败，不得报告目标操作成功，必须返回明确错误（见第 9 节）。通知已发送后的 `TRIGGERED` 状态是唯一例外：一旦状态保存成功，即使清理失败也保留已通知事实。
 - 对已经取消或从未注册的 `reminderId`，`cancel` 和 `unregister` 必须可安全重复调用（幂等 no-op），使禁用、完成、触发、编辑和删除路径可以无条件清理。
+
+相同状态请求是真正的幂等 no-op：成功返回当前 Reminder，不再次保存、不注册或清理 Trigger，也不改写 `triggeredAt` / `completedAt`。
+
+同一个 `ReminderService` 实例必须按 Reminder ID 串行执行创建、状态变更、编辑、删除及触发清理，以免异步端口调用期间较旧的 ACTIVE 快照覆盖后续 TRIGGERED 或 COMPLETED 状态。不同 ID 可以并行。此进程内保证不替代后续持久化适配器的跨进程并发控制；集成时应共享同一服务实例。
+
+因此 TRIGGERED 已保存但清理失败时，不通过再次调用 `markTriggered` 重试；`ReminderService.retryTriggerCleanup(id)` 是单独的可重试清理入口，只清理残留 Trigger，不发送通知、不修改状态或时间戳。Stage 2 不实现后台自动重试。
+
+ACTIVE Reminder 编辑按“校验新输入 → 保留 id、createdAt 和状态构造新实体 → 清理旧 Trigger → 注册新 Trigger → 最后保存新实体”的顺序执行。失败时取消已注册的新 Trigger、尽可能恢复旧 Trigger；旧仓储记录不得被新实体覆盖，也不得报告编辑成功。
 
 同步规则只规定调用顺序与失败语义，不新增调度机制或其他架构层。
 
@@ -519,8 +534,10 @@ ReminderRepository
 - Reminder 输入错误：由 ReminderService 拒绝并返回字段级错误。
 - Repository 错误：保留原状态，不报告创建成功。
 - 时间或位置注册错误：Reminder 不得表现为已成功启用；服务返回可恢复错误。
-- 触发清理错误（禁用、完成、触发、编辑或删除时的 `cancel` / `unregister` 失败）：不得报告目标状态已生效，返回可恢复错误。
+- 触发清理错误：禁用、完成、编辑或删除不得报告目标操作成功，返回可恢复错误；`TRIGGERED` 状态保存成功后的清理错误返回失败结果，但保留 TRIGGERED 和已通知事实，不能回滚成 ACTIVE。
 - 通知错误：不得把 Reminder 标记为 `TRIGGERED`；返回可重试错误并记录脱敏日志。自动重试频率不属于本次公共基础实现。
+
+如果通知已成功、但保存 `TRIGGERED` 本身失败，Service 返回 `REPOSITORY_ERROR`，无法仅靠本阶段的内存仓储保证跨进程去重。后续 TriggerCoordinator 与通知适配器集成时必须设计恢复或去重策略，不能把一次失败的状态保存解释为“通知未发出”。
 
 日志不得输出凭证、完整供应商请求头或其他敏感配置。
 
@@ -604,24 +621,3 @@ ReminderRepository
 9. 最后进行完整功能测试、真机验证、UI 优化和上架准备。
 
 不在 Fake AI 刚完成后立即开发真实 AI Provider。
-
-## 修订说明
-
-- 明确 Scene 公共模型与地点业务实现边界。
-- 区分顶层公共 `model/**` 与 `location/model/**` 所有权。
-- 明确 V1 仅要求 `ENTER`，`EXIT` 仅预留。
-- 将 `.gitignore` 和 `assembleHap` 的当前状态改为可验证表述。
-- 再次明确 `feature-ai` 不实现 UI、时间、通知、定位正式能力。
-- 调整真实 AI Provider 的开发顺序，改为第一次完整集成后接入。
-- 明确 AIService 通过 SceneResolver 解析 sceneName。
-- 明确 ReminderRepository.save() 为 upsert。
-- 明确 TriggerCoordinator 通过 ReminderService 更新状态。
-- 增加 Reminder 创建/启用与 Trigger 注册的一致性原则。
-- 明确 V1 不激活 EXIT 类型提醒。
-- 明确当前阶段不创建 AI 后端。
-- 增加 BOTH 在进程恢复后的重新判定原则。
-- 在团队所有权章节显式列出三人固定分工，并明确 SceneResolver 正式实现归兰铮。
-- 增加字段组合一致性规则与 `INCONSISTENT_TRIGGER_FIELDS`。
-- 增加 Reminder 生命周期与 Trigger 同步及清理规则。
-- 补充 Scene 经纬度、半径的单位和取值范围。
-- 明确 V1 事件协议只实现 ENTER 语义，EXIT 仅为模型预留。

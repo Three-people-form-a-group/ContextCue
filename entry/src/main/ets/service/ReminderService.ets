@@ -36,6 +36,7 @@ export class ReminderService {
   private locationPort: LocationTriggerPort;
   private now: () => number;
   private newId: () => string;
+  private mutationGates: Map<string, Promise<void>> = new Map<string, Promise<void>>();
 
   constructor(repository: ReminderRepository, timePort: TimeTriggerPort, locationPort: LocationTriggerPort,
     now: () => number, newId: () => string) {
@@ -66,7 +67,10 @@ export class ReminderService {
       source: input.source,
       createdAt: createdAt
     };
+    return this.serialize(reminder.id, () => this.createRegistered(reminder));
+  }
 
+  private async createRegistered(reminder: Reminder): Promise<OperationResult<Reminder>> {
     try {
       if (await this.repository.findById(reminder.id) !== undefined) {
         return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒 ID 已存在', true) };
@@ -112,18 +116,22 @@ export class ReminderService {
   }
 
   async enable(id: string): Promise<OperationResult<Reminder>> {
-    return this.transition(id, ReminderStatus.ACTIVE);
+    return this.serialize(id, () => this.transition(id, ReminderStatus.ACTIVE));
   }
 
   async disable(id: string): Promise<OperationResult<Reminder>> {
-    return this.transition(id, ReminderStatus.DISABLED);
+    return this.serialize(id, () => this.transition(id, ReminderStatus.DISABLED));
   }
 
   async complete(id: string): Promise<OperationResult<Reminder>> {
-    return this.transition(id, ReminderStatus.COMPLETED);
+    return this.serialize(id, () => this.transition(id, ReminderStatus.COMPLETED));
   }
 
   async markTriggered(id: string, occurredAt: number): Promise<OperationResult<Reminder>> {
+    return this.serialize(id, () => this.markTriggeredInternal(id, occurredAt));
+  }
+
+  private async markTriggeredInternal(id: string, occurredAt: number): Promise<OperationResult<Reminder>> {
     const loaded = await this.findById(id);
     if (!loaded.success || loaded.data === undefined) {
       return { success: false, error: loaded.error };
@@ -148,6 +156,10 @@ export class ReminderService {
   }
 
   async retryTriggerCleanup(id: string): Promise<OperationResult<Reminder>> {
+    return this.serialize(id, () => this.retryTriggerCleanupInternal(id));
+  }
+
+  private async retryTriggerCleanupInternal(id: string): Promise<OperationResult<Reminder>> {
     const loaded = await this.findById(id);
     if (!loaded.success || loaded.data === undefined) {
       return { success: false, error: loaded.error };
@@ -162,6 +174,10 @@ export class ReminderService {
   }
 
   async update(id: string, input: CreateReminderInput): Promise<OperationResult<Reminder>> {
+    return this.serialize(id, () => this.updateInternal(id, input));
+  }
+
+  private async updateInternal(id: string, input: CreateReminderInput): Promise<OperationResult<Reminder>> {
     const validation = validateCreateReminderInput(input, this.now());
     if (validation.length > 0) {
       return { success: false, error: validation[0] };
@@ -217,6 +233,10 @@ export class ReminderService {
   }
 
   async delete(id: string): Promise<OperationResult<boolean>> {
+    return this.serialize(id, () => this.deleteInternal(id));
+  }
+
+  private async deleteInternal(id: string): Promise<OperationResult<boolean>> {
     const loaded = await this.findById(id);
     if (!loaded.success || loaded.data === undefined) {
       return { success: false, error: loaded.error };
@@ -267,18 +287,18 @@ export class ReminderService {
       if (validation.length > 0) {
         return { success: false, error: validation[0] };
       }
+      const active = withStatus(current, ReminderStatus.ACTIVE);
       try {
-        await this.register(current);
+        await this.register(active);
       } catch (_) {
-        await this.cleanup(current);
+        await this.cleanup(active);
         return { success: false, error: serviceError('TRIGGER_REGISTRATION_ERROR', '触发条件注册失败', true) };
       }
-      const active = withStatus(current, ReminderStatus.ACTIVE);
       try {
         await this.repository.save(active);
         return { success: true, data: active };
       } catch (_) {
-        await this.cleanup(current);
+        await this.cleanup(active);
         return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒状态保存失败', true) };
       }
     }
@@ -298,6 +318,26 @@ export class ReminderService {
         await this.restore(current);
       }
       return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒状态保存失败', true) };
+    }
+  }
+
+  private async serialize<T>(id: string, action: () => Promise<OperationResult<T>>): Promise<OperationResult<T>> {
+    const previous = this.mutationGates.get(id);
+    let releaseGate: () => void = () => {};
+    const gate: Promise<void> = new Promise<void>((resolve: () => void) => {
+      releaseGate = resolve;
+    });
+    this.mutationGates.set(id, gate);
+    if (previous !== undefined) {
+      await previous;
+    }
+    try {
+      return await action();
+    } finally {
+      releaseGate();
+      if (this.mutationGates.get(id) === gate) {
+        this.mutationGates.delete(id);
+      }
     }
   }
 

@@ -11,20 +11,52 @@ class TestRepository extends InMemoryReminderRepository {
   saves: number = 0;
   failSave: boolean = false;
   failDelete: boolean = false;
+  failFind: boolean = false;
+  events?: string[];
 
   async save(reminder: Reminder): Promise<void> {
     this.saves++;
+    this.events?.push('save:' + reminder.status);
     if (this.failSave) {
       throw new Error('save failed');
     }
     await super.save(reminder);
   }
 
+  async findById(id: string): Promise<Reminder | undefined> {
+    if (this.failFind) {
+      throw new Error('read failed');
+    }
+    return super.findById(id);
+  }
+
   async deleteById(id: string): Promise<boolean> {
+    this.events?.push('delete');
     if (this.failDelete) {
       throw new Error('delete failed');
     }
     return super.deleteById(id);
+  }
+}
+
+class DelayedDisableRepository extends TestRepository {
+  private releaseDisable?: () => void;
+  disableSaveEntered: boolean = false;
+
+  async save(reminder: Reminder): Promise<void> {
+    if (reminder.status === ReminderStatus.DISABLED) {
+      this.disableSaveEntered = true;
+      await new Promise<void>((resolve: () => void) => {
+        this.releaseDisable = resolve;
+      });
+    }
+    await super.save(reminder);
+  }
+
+  release(): void {
+    if (this.releaseDisable !== undefined) {
+      this.releaseDisable();
+    }
   }
 }
 
@@ -33,15 +65,20 @@ class TestTimePort implements TimeTriggerPort {
   cancelled: string[] = [];
   failSchedule: boolean = false;
   failCancel: boolean = false;
+  lastScheduledStatus?: ReminderStatus;
+  events?: string[];
 
   async schedule(reminder: Reminder): Promise<void> {
+    this.events?.push('schedule:' + reminder.content);
     if (this.failSchedule) {
       throw new Error('schedule failed');
     }
     this.scheduled.push(reminder.id);
+    this.lastScheduledStatus = reminder.status;
   }
 
   async cancel(reminderId: string): Promise<void> {
+    this.events?.push('cancel');
     if (this.failCancel) {
       throw new Error('cancel failed');
     }
@@ -54,8 +91,10 @@ class TestLocationPort implements LocationTriggerPort {
   unregistered: string[] = [];
   failRegister: boolean = false;
   failUnregister: boolean = false;
+  events?: string[];
 
   async register(reminder: Reminder): Promise<void> {
+    this.events?.push('register:' + reminder.content);
     if (this.failRegister) {
       throw new Error('register failed');
     }
@@ -63,6 +102,7 @@ class TestLocationPort implements LocationTriggerPort {
   }
 
   async unregister(reminderId: string): Promise<void> {
+    this.events?.push('unregister');
     if (this.failUnregister) {
       throw new Error('unregister failed');
     }
@@ -172,6 +212,7 @@ export default function reminderServiceTest() {
       expect(location.unregistered.length).assertEqual(1);
       expect((await service.enable('r-6')).data?.status).assertEqual(ReminderStatus.ACTIVE);
       expect(time.scheduled.length).assertEqual(2);
+      expect(time.lastScheduledStatus).assertEqual(ReminderStatus.ACTIVE);
       const savesAfterEnable = repository.saves;
       expect((await service.enable('r-6')).success).assertTrue();
       expect(repository.saves).assertEqual(savesAfterEnable);
@@ -301,6 +342,124 @@ export default function reminderServiceTest() {
       expect(result.error?.code).assertEqual('REPOSITORY_ERROR');
       expect((await repository.findById('r-existing'))?.content).assertEqual('原提醒');
       expect(time.scheduled.length).assertEqual(0);
+    });
+
+    it('serializes overlapping status changes so a later completion cannot be overwritten', 0, async () => {
+      const repository = new DelayedDisableRepository();
+      const service = new ReminderService(repository, new TestTimePort(), new TestLocationPort(), () => 3000, () => 'unused');
+      const reminder: Reminder = { id: 'r-race', content: '带电脑', triggerType: TriggerType.TIME, triggerTime: 4000, status: ReminderStatus.ACTIVE, source: ReminderSource.MANUAL, createdAt: 1000 };
+      await repository.save(reminder);
+      const disabling = service.disable('r-race');
+      for (let i = 0; i < 20 && !repository.disableSaveEntered; i++) {
+        await Promise.resolve();
+      }
+      expect(repository.disableSaveEntered).assertTrue();
+      const completing = service.complete('r-race');
+      for (let i = 0; i < 20; i++) {
+        await Promise.resolve();
+      }
+      repository.release();
+      expect((await disabling).success).assertTrue();
+      expect((await completing).success).assertTrue();
+      expect((await repository.findById('r-race'))?.status).assertEqual(ReminderStatus.COMPLETED);
+    });
+
+    it('orders registration, save, notification-state save, and cleanup', 0, async () => {
+      const events: string[] = [];
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      repository.events = events;
+      time.events = events;
+      location.events = events;
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-order');
+      const input: CreateReminderInput = { content: '带电脑', triggerType: TriggerType.BOTH, triggerTime: 2000, sceneId: 'scene-1', source: ReminderSource.MANUAL };
+      await service.create(input);
+      expect(events.join(',')).assertEqual('schedule:带电脑,register:带电脑,save:ACTIVE');
+      events.length = 0;
+      await service.markTriggered('r-order', 2000);
+      expect(events.join(',')).assertEqual('save:TRIGGERED,cancel,unregister');
+    });
+
+    it('orders active edit and deletion around repository mutation', 0, async () => {
+      const events: string[] = [];
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      repository.events = events;
+      time.events = events;
+      location.events = events;
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-order-2');
+      await service.create(timeInput());
+      events.length = 0;
+      await service.update('r-order-2', { content: '取快递', triggerType: TriggerType.LOCATION, sceneId: 'scene-1', source: ReminderSource.AI });
+      expect(events.join(',')).assertEqual('cancel,unregister,register:取快递,save:ACTIVE');
+      events.length = 0;
+      await service.delete('r-order-2');
+      expect(events.join(',')).assertEqual('cancel,unregister,delete');
+    });
+
+    it('returns stable errors for read, enable, ordinary save, and notification-state save failures', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const service = new ReminderService(repository, time, new TestLocationPort(), () => 1000, () => 'r-fail');
+      await service.create(timeInput());
+      repository.failFind = true;
+      expect((await service.findById('r-fail')).error?.code).assertEqual('REPOSITORY_ERROR');
+      repository.failFind = false;
+      repository.failSave = true;
+      const disabled = await service.disable('r-fail');
+      expect(disabled.error?.code).assertEqual('REPOSITORY_ERROR');
+      expect(disabled.error?.retryable).assertTrue();
+      expect((await repository.findById('r-fail'))?.status).assertEqual(ReminderStatus.ACTIVE);
+      const triggered = await service.markTriggered('r-fail', 2000);
+      expect(triggered.error?.code).assertEqual('REPOSITORY_ERROR');
+      expect((await repository.findById('r-fail'))?.status).assertEqual(ReminderStatus.ACTIVE);
+      repository.failSave = false;
+      await service.disable('r-fail');
+      repository.failSave = true;
+      const enabled = await service.enable('r-fail');
+      expect(enabled.error?.code).assertEqual('REPOSITORY_ERROR');
+      expect((await repository.findById('r-fail'))?.status).assertEqual(ReminderStatus.DISABLED);
+    });
+
+    it('keeps old data when replacement registration or deletion cleanup fails', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-fail-2');
+      await service.create(timeInput());
+      location.failRegister = true;
+      const next: CreateReminderInput = { content: '新提醒', triggerType: TriggerType.LOCATION, sceneId: 'scene-1', source: ReminderSource.AI };
+      expect((await service.update('r-fail-2', next)).error?.code).assertEqual('TRIGGER_REGISTRATION_ERROR');
+      expect((await repository.findById('r-fail-2'))?.content).assertEqual('带电脑');
+      expect(time.scheduled.length).assertEqual(2);
+      time.failCancel = true;
+      const deleted = await service.delete('r-fail-2');
+      expect(deleted.error?.code).assertEqual('TRIGGER_CLEANUP_ERROR');
+      expect((await repository.findById('r-fail-2'))?.status).assertEqual(ReminderStatus.ACTIVE);
+    });
+
+    it('repeated terminal-state actions leave repository and ports unchanged', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 3000, () => 'unused');
+      const triggered: Reminder = { id: 'r-terminal', content: '带电脑', triggerType: TriggerType.TIME, triggerTime: 2000, status: ReminderStatus.TRIGGERED, source: ReminderSource.MANUAL, createdAt: 1000, triggeredAt: 2500 };
+      await repository.save(triggered);
+      const initialSaves = repository.saves;
+      expect((await service.markTriggered('r-terminal', 3000)).data?.triggeredAt).assertEqual(2500);
+      expect(repository.saves).assertEqual(initialSaves);
+      expect(time.cancelled.length).assertEqual(0);
+      expect(location.unregistered.length).assertEqual(0);
+      await service.complete('r-terminal');
+      const completedSaves = repository.saves;
+      const cancelled = time.cancelled.length;
+      const unregistered = location.unregistered.length;
+      expect((await service.complete('r-terminal')).data?.completedAt).assertEqual(3000);
+      expect(repository.saves).assertEqual(completedSaves);
+      expect(time.cancelled.length).assertEqual(cancelled);
+      expect(location.unregistered.length).assertEqual(unregistered);
     });
   });
 }

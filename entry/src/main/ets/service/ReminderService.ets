@@ -68,6 +68,14 @@ export class ReminderService {
     };
 
     try {
+      if (await this.repository.findById(reminder.id) !== undefined) {
+        return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒 ID 已存在', true) };
+      }
+    } catch (_) {
+      return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒 ID 检查失败', true) };
+    }
+
+    try {
       await this.register(reminder);
     } catch (_) {
       await this.cleanup(reminder);
@@ -151,6 +159,90 @@ export class ReminderService {
       return { success: false, data: loaded.data, error: serviceError('TRIGGER_CLEANUP_ERROR', '触发器清理失败', true) };
     }
     return { success: true, data: loaded.data };
+  }
+
+  async update(id: string, input: CreateReminderInput): Promise<OperationResult<Reminder>> {
+    const validation = validateCreateReminderInput(input, this.now());
+    if (validation.length > 0) {
+      return { success: false, error: validation[0] };
+    }
+    const loaded = await this.findById(id);
+    if (!loaded.success || loaded.data === undefined) {
+      return { success: false, error: loaded.error };
+    }
+    const current = loaded.data;
+    if (current.status !== ReminderStatus.ACTIVE && current.status !== ReminderStatus.DISABLED) {
+      return { success: false, error: serviceError('INVALID_STATUS_TRANSITION', '已触发或完成的提醒不能编辑', false) };
+    }
+    const next: Reminder = {
+      id: current.id,
+      content: input.content.trim(),
+      triggerType: input.triggerType,
+      triggerTime: input.triggerTime,
+      sceneId: input.sceneId === undefined ? undefined : input.sceneId.trim(),
+      sceneName: input.sceneName,
+      locationTriggerMode: input.triggerType === TriggerType.TIME ? undefined :
+        (input.locationTriggerMode === undefined ? LocationTriggerMode.ENTER : input.locationTriggerMode),
+      status: current.status,
+      source: input.source,
+      createdAt: current.createdAt,
+      triggeredAt: current.triggeredAt,
+      completedAt: current.completedAt
+    };
+
+    if (current.status === ReminderStatus.ACTIVE) {
+      if (!(await this.cleanupAll(current))) {
+        await this.restore(current);
+        return { success: false, error: serviceError('TRIGGER_CLEANUP_ERROR', '旧触发器清理失败', true) };
+      }
+      try {
+        await this.register(next);
+      } catch (_) {
+        await this.cleanup(next);
+        await this.restore(current);
+        return { success: false, error: serviceError('TRIGGER_REGISTRATION_ERROR', '新触发条件注册失败', true) };
+      }
+    }
+
+    try {
+      await this.repository.save(next);
+      return { success: true, data: next };
+    } catch (_) {
+      if (current.status === ReminderStatus.ACTIVE) {
+        await this.cleanup(next);
+        await this.restore(current);
+      }
+      return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒编辑保存失败', true) };
+    }
+  }
+
+  async delete(id: string): Promise<OperationResult<boolean>> {
+    const loaded = await this.findById(id);
+    if (!loaded.success || loaded.data === undefined) {
+      return { success: false, error: loaded.error };
+    }
+    const current = loaded.data;
+    if (!(await this.cleanupAll(current))) {
+      if (current.status === ReminderStatus.ACTIVE) {
+        await this.restore(current);
+      }
+      return { success: false, error: serviceError('TRIGGER_CLEANUP_ERROR', '触发器清理失败', true) };
+    }
+    try {
+      const deleted = await this.repository.deleteById(id);
+      if (!deleted) {
+        if (current.status === ReminderStatus.ACTIVE) {
+          await this.restore(current);
+        }
+        return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒删除失败', true) };
+      }
+      return { success: true, data: true };
+    } catch (_) {
+      if (current.status === ReminderStatus.ACTIVE) {
+        await this.restore(current);
+      }
+      return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒删除失败', true) };
+    }
   }
 
   private async transition(id: string, target: ReminderStatus): Promise<OperationResult<Reminder>> {

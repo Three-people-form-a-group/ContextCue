@@ -10,6 +10,7 @@ import { ReminderService } from '../main/ets/service/ReminderService';
 class TestRepository extends InMemoryReminderRepository {
   saves: number = 0;
   failSave: boolean = false;
+  failDelete: boolean = false;
 
   async save(reminder: Reminder): Promise<void> {
     this.saves++;
@@ -17,6 +18,13 @@ class TestRepository extends InMemoryReminderRepository {
       throw new Error('save failed');
     }
     await super.save(reminder);
+  }
+
+  async deleteById(id: string): Promise<boolean> {
+    if (this.failDelete) {
+      throw new Error('delete failed');
+    }
+    return super.deleteById(id);
   }
 }
 
@@ -213,6 +221,86 @@ export default function reminderServiceTest() {
       expect(result.error?.code).assertEqual('TRIGGER_CLEANUP_ERROR');
       expect((await repository.findById('r-9'))?.status).assertEqual(ReminderStatus.ACTIVE);
       expect((await service.disable('missing')).error?.code).assertEqual('REMINDER_NOT_FOUND');
+    });
+
+    it('edits ACTIVE BOTH to TIME and preserves identity while removing old location trigger', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-10');
+      const both: CreateReminderInput = { content: '旧提醒', triggerType: TriggerType.BOTH, triggerTime: 2000, sceneId: 'scene-1', source: ReminderSource.MANUAL };
+      await service.create(both);
+      const updated = await service.update('r-10', timeInput());
+      expect(updated.success).assertTrue();
+      expect(updated.data?.id).assertEqual('r-10');
+      expect(updated.data?.createdAt).assertEqual(1000);
+      expect(updated.data?.content).assertEqual('带电脑');
+      expect(updated.data?.triggerType).assertEqual(TriggerType.TIME);
+      expect(updated.data?.sceneId).assertUndefined();
+      expect(updated.data?.status).assertEqual(ReminderStatus.ACTIVE);
+      expect(location.unregistered.length).assertEqual(1);
+      expect(time.cancelled.length).assertEqual(1);
+      expect(time.scheduled.length).assertEqual(2);
+    });
+
+    it('edits DISABLED without registration and rejects editing terminal status', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'unused');
+      const disabled: Reminder = { id: 'r-11', content: '旧提醒', triggerType: TriggerType.TIME, triggerTime: 2000, status: ReminderStatus.DISABLED, source: ReminderSource.MANUAL, createdAt: 100 };
+      await repository.save(disabled);
+      const result = await service.update('r-11', timeInput());
+      expect(result.data?.status).assertEqual(ReminderStatus.DISABLED);
+      expect(result.data?.createdAt).assertEqual(100);
+      expect(time.scheduled.length).assertEqual(0);
+      const completed: Reminder = { id: 'r-12', content: '旧提醒', triggerType: TriggerType.TIME, triggerTime: 2000, status: ReminderStatus.COMPLETED, source: ReminderSource.MANUAL, createdAt: 100, completedAt: 500 };
+      await repository.save(completed);
+      expect((await service.update('r-12', timeInput())).error?.code).assertEqual('INVALID_STATUS_TRANSITION');
+    });
+
+    it('restores old ACTIVE triggers and record when an edit save fails', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-13');
+      await service.create(timeInput());
+      repository.failSave = true;
+      const next: CreateReminderInput = { content: '新提醒', triggerType: TriggerType.LOCATION, sceneId: 'scene-1', source: ReminderSource.AI };
+      const result = await service.update('r-13', next);
+      expect(result.error?.code).assertEqual('REPOSITORY_ERROR');
+      expect((await repository.findById('r-13'))?.content).assertEqual('带电脑');
+      expect(location.unregistered.length).assertEqual(2);
+      expect(time.scheduled.length).assertEqual(2);
+    });
+
+    it('deletes only after cleanup and restores registration if deletion fails', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-14');
+      await service.create(timeInput());
+      repository.failDelete = true;
+      expect((await service.delete('r-14')).error?.code).assertEqual('REPOSITORY_ERROR');
+      expect((await repository.findById('r-14'))?.status).assertEqual(ReminderStatus.ACTIVE);
+      expect(time.scheduled.length).assertEqual(2);
+      repository.failDelete = false;
+      expect((await service.delete('r-14')).data).assertTrue();
+      expect(await repository.findById('r-14')).assertUndefined();
+      expect((await service.delete('r-14')).error?.code).assertEqual('REMINDER_NOT_FOUND');
+    });
+
+    it('never overwrites an existing reminder when an ID factory collides', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const service = new ReminderService(repository, time, new TestLocationPort(), () => 1000, () => 'r-existing');
+      const existing: Reminder = { id: 'r-existing', content: '原提醒', triggerType: TriggerType.TIME, triggerTime: 2000, status: ReminderStatus.DISABLED, source: ReminderSource.MANUAL, createdAt: 100 };
+      await repository.save(existing);
+      const result = await service.create(timeInput());
+      expect(result.success).assertFalse();
+      expect(result.error?.code).assertEqual('REPOSITORY_ERROR');
+      expect((await repository.findById('r-existing'))?.content).assertEqual('原提醒');
+      expect(time.scheduled.length).assertEqual(0);
     });
   });
 }

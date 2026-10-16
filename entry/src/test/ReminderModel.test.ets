@@ -56,7 +56,7 @@ export default function reminderModelTest() {
         sceneId: 'scene-2',
         sceneName: '宿舍',
         locationTriggerMode: LocationTriggerMode.ENTER,
-        status: ReminderStatus.TRIGGERED,
+        status: ReminderStatus.COMPLETED,
         source: ReminderSource.AI,
         createdAt: 300,
         triggeredAt: 2100,
@@ -66,6 +66,7 @@ export default function reminderModelTest() {
       expect(timeReminder.triggerTime).assertEqual(1000);
       expect(locationReminder.sceneId).assertEqual('scene-1');
       expect(bothReminder.locationTriggerMode).assertEqual(LocationTriggerMode.ENTER);
+      expect(bothReminder.status).assertEqual(ReminderStatus.COMPLETED);
       expect(bothReminder.triggeredAt).assertEqual(2100);
       expect(bothReminder.completedAt).assertEqual(2200);
     });

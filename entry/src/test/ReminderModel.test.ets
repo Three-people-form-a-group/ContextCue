@@ -9,7 +9,7 @@ import {
   TriggerType
 } from '../main/ets/model/ReminderEnums';
 import { Scene } from '../main/ets/model/Scene';
-import { validateCreateReminderInput } from '../main/ets/model/ReminderModelRules';
+import { canTransitionReminderStatus, validateCreateReminderInput } from '../main/ets/model/ReminderModelRules';
 
 export default function reminderModelTest() {
   describe('reminderModelTest', () => {
@@ -170,6 +170,31 @@ export default function reminderModelTest() {
       const both: CreateReminderInput = { content: 'a', triggerType: TriggerType.BOTH, triggerTime: 1000, sceneId: 'scene', locationTriggerMode: LocationTriggerMode.EXIT, source: ReminderSource.AI };
       expect(validateCreateReminderInput(location, 1000)[0].code).assertEqual('UNSUPPORTED_LOCATION_TRIGGER_MODE');
       expect(validateCreateReminderInput(both, 1000)[0].code).assertEqual('UNSUPPORTED_LOCATION_TRIGGER_MODE');
+    });
+
+    it('allows each status to remain unchanged', 0, () => {
+      expect(canTransitionReminderStatus(ReminderStatus.ACTIVE, ReminderStatus.ACTIVE)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.DISABLED, ReminderStatus.DISABLED)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.TRIGGERED, ReminderStatus.TRIGGERED)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.COMPLETED, ReminderStatus.COMPLETED)).assertTrue();
+    });
+
+    it('allows only the specified active and disabled transitions', 0, () => {
+      expect(canTransitionReminderStatus(ReminderStatus.ACTIVE, ReminderStatus.TRIGGERED)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.ACTIVE, ReminderStatus.COMPLETED)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.ACTIVE, ReminderStatus.DISABLED)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.DISABLED, ReminderStatus.ACTIVE)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.DISABLED, ReminderStatus.COMPLETED)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.DISABLED, ReminderStatus.TRIGGERED)).assertFalse();
+    });
+
+    it('keeps triggered and completed statuses terminal as specified', 0, () => {
+      expect(canTransitionReminderStatus(ReminderStatus.TRIGGERED, ReminderStatus.COMPLETED)).assertTrue();
+      expect(canTransitionReminderStatus(ReminderStatus.TRIGGERED, ReminderStatus.ACTIVE)).assertFalse();
+      expect(canTransitionReminderStatus(ReminderStatus.TRIGGERED, ReminderStatus.DISABLED)).assertFalse();
+      expect(canTransitionReminderStatus(ReminderStatus.COMPLETED, ReminderStatus.ACTIVE)).assertFalse();
+      expect(canTransitionReminderStatus(ReminderStatus.COMPLETED, ReminderStatus.TRIGGERED)).assertFalse();
+      expect(canTransitionReminderStatus(ReminderStatus.COMPLETED, ReminderStatus.DISABLED)).assertFalse();
     });
   });
 }

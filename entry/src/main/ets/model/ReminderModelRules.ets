@@ -1,6 +1,6 @@
 import { CreateReminderInput } from './CreateReminderInput';
 import { OperationError } from './OperationResult';
-import { LocationTriggerMode, TriggerType } from './ReminderEnums';
+import { LocationTriggerMode, ReminderStatus, TriggerType } from './ReminderEnums';
 
 function inputError(code: string, message: string, field: string): OperationError {
   return { code: code, message: message, field: field, retryable: false };
@@ -47,4 +47,20 @@ export function validateCreateReminderInput(input: CreateReminderInput, now: num
   }
 
   return errors;
+}
+
+export function canTransitionReminderStatus(current: ReminderStatus, next: ReminderStatus): boolean {
+  if (current === next) {
+    return true;
+  }
+  if (current === ReminderStatus.ACTIVE) {
+    return next === ReminderStatus.TRIGGERED || next === ReminderStatus.COMPLETED || next === ReminderStatus.DISABLED;
+  }
+  if (current === ReminderStatus.DISABLED) {
+    return next === ReminderStatus.ACTIVE || next === ReminderStatus.COMPLETED;
+  }
+  if (current === ReminderStatus.TRIGGERED) {
+    return next === ReminderStatus.COMPLETED;
+  }
+  return false;
 }

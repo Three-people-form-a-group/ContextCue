@@ -4,6 +4,7 @@ import reminderRepositoryTest from './ReminderRepository.test';
 import reminderTriggerPortTest from './ReminderTriggerPort.test';
 import reminderServiceTest from './ReminderService.test';
 import aiContractsTest from './AIContracts.test';
+import aiResponseParserTest from './AIResponseParser.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -12,4 +13,5 @@ export default function testsuite() {
   reminderTriggerPortTest();
   reminderServiceTest();
   aiContractsTest();
+  aiResponseParserTest();
 }

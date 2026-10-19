@@ -6,6 +6,7 @@ import reminderServiceTest from './ReminderService.test';
 import aiContractsTest from './AIContracts.test';
 import aiResponseParserTest from './AIResponseParser.test';
 import aiParseValidatorTest from './AIParseValidator.test';
+import reminderMapperTest from './ReminderMapper.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -16,4 +17,5 @@ export default function testsuite() {
   aiContractsTest();
   aiResponseParserTest();
   aiParseValidatorTest();
+  reminderMapperTest();
 }

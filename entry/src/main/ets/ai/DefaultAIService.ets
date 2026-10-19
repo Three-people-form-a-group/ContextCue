@@ -26,9 +26,17 @@ export class DefaultAIService implements AIService {
   }
 
   async parseReminder(text: string, context: AIParseContext): Promise<AIParseOutcome> {
-    if (text.trim().length === 0 || !Number.isFinite(context.now) ||
-      context.timeZone.trim().length === 0 || context.locale.trim().length === 0) {
+    if (text.trim().length === 0) {
       return outcome(AIParseStatus.NEEDS_CONFIRMATION, [issue(AIParseIssueCode.INVALID_INPUT, 'text', false)]);
+    }
+    if (!Number.isFinite(context.now)) {
+      return outcome(AIParseStatus.FAILED, [issue(AIParseIssueCode.INVALID_INPUT, 'now', false)]);
+    }
+    if (context.timeZone.trim().length === 0) {
+      return outcome(AIParseStatus.FAILED, [issue(AIParseIssueCode.INVALID_INPUT, 'timeZone', false)]);
+    }
+    if (context.locale.trim().length === 0) {
+      return outcome(AIParseStatus.FAILED, [issue(AIParseIssueCode.INVALID_INPUT, 'locale', false)]);
     }
     let providerResult: AIProviderResult;
     try {

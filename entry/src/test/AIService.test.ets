@@ -90,5 +90,12 @@ export default function aiServiceTest() {
       expect(outcome.issues[0].code).assertEqual(AIParseIssueCode.PROVIDER_ERROR);
       expect(outcome.issues[0].message.includes('private')).assertFalse();
     });
+    it('fails on invalid caller context instead of asking user to edit text', 0, async () => {
+      const badContext: AIParseContext = { now: Number.NaN, timeZone: 'Asia/Shanghai', locale: 'zh-CN' };
+      const outcome = await new DefaultAIService(new ThrowingProvider(), new TestResolver()).parseReminder('input', badContext);
+      expect(outcome.status).assertEqual(AIParseStatus.FAILED);
+      expect(outcome.issues[0].field).assertEqual('now');
+      expect(outcome.draft).assertUndefined();
+    });
   });
 }

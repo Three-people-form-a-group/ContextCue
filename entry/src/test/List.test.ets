@@ -3,6 +3,7 @@ import reminderModelTest from './ReminderModel.test';
 import reminderRepositoryTest from './ReminderRepository.test';
 import reminderTriggerPortTest from './ReminderTriggerPort.test';
 import reminderServiceTest from './ReminderService.test';
+import aiContractsTest from './AIContracts.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -10,4 +11,5 @@ export default function testsuite() {
   reminderRepositoryTest();
   reminderTriggerPortTest();
   reminderServiceTest();
+  aiContractsTest();
 }

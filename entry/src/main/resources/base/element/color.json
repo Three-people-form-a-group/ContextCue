@@ -2,7 +2,79 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#FFFFFF"
+      "value": "#B9D5DC"
+    },
+    {
+      "name": "background_primary",
+      "value": "#B9D5DC"
+    },
+    {
+      "name": "background_secondary",
+      "value": "#8FA5AE"
+    },
+    {
+      "name": "surface_primary",
+      "value": "#FAF7EC"
+    },
+    {
+      "name": "surface_secondary",
+      "value": "#EADDBE"
+    },
+    {
+      "name": "text_primary",
+      "value": "#30343A"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#4E5C64"
+    },
+    {
+      "name": "brand_primary",
+      "value": "#667681"
+    },
+    {
+      "name": "accent_primary",
+      "value": "#F5B66F"
+    },
+    {
+      "name": "accent_secondary",
+      "value": "#A58A60"
+    },
+    {
+      "name": "accent_vermilion",
+      "value": "#C0392B"
+    },
+    {
+      "name": "accent_sage",
+      "value": "#78866B"
+    },
+    {
+      "name": "accent_burgundy",
+      "value": "#7A2E2E"
+    },
+    {
+      "name": "accent_olive",
+      "value": "#5E5B3A"
+    },
+    {
+      "name": "accent_terracotta",
+      "value": "#8C4A32"
+    },
+    {
+      "name": "detail_ink",
+      "value": "#703434"
+    },
+    {
+      "name": "detail_note",
+      "value": "#263121"
+    },
+    {
+      "name": "detail_note_alt",
+      "value": "#364252"
+    },
+    {
+      "name": "border_subtle",
+      "value": "#C4B394"
     }
   ]
 }

@@ -7,6 +7,7 @@ import aiContractsTest from './AIContracts.test';
 import aiResponseParserTest from './AIResponseParser.test';
 import aiParseValidatorTest from './AIParseValidator.test';
 import reminderMapperTest from './ReminderMapper.test';
+import aiServiceTest from './AIService.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -18,4 +19,5 @@ export default function testsuite() {
   aiResponseParserTest();
   aiParseValidatorTest();
   reminderMapperTest();
+  aiServiceTest();
 }

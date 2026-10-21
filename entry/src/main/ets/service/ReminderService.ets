@@ -131,6 +131,26 @@ export class ReminderService {
     return this.serialize(id, () => this.markTriggeredInternal(id, occurredAt));
   }
 
+  async processActiveTrigger(id: string, occurredAt: number,
+    action: (reminder: Reminder) => Promise<boolean>): Promise<OperationResult<Reminder>> {
+    return this.serialize(id, () => this.processActiveTriggerInternal(id, occurredAt, action));
+  }
+
+  private async processActiveTriggerInternal(id: string, occurredAt: number,
+    action: (reminder: Reminder) => Promise<boolean>): Promise<OperationResult<Reminder>> {
+    const loaded = await this.findById(id);
+    if (!loaded.success || loaded.data === undefined) {
+      return { success: false, error: loaded.error };
+    }
+    if (loaded.data.status !== ReminderStatus.ACTIVE) {
+      return { success: true, data: loaded.data };
+    }
+    if (!(await action(loaded.data))) {
+      return { success: true, data: loaded.data };
+    }
+    return this.markTriggeredInternal(id, occurredAt);
+  }
+
   private async markTriggeredInternal(id: string, occurredAt: number): Promise<OperationResult<Reminder>> {
     const loaded = await this.findById(id);
     if (!loaded.success || loaded.data === undefined) {

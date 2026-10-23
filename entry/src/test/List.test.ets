@@ -10,6 +10,7 @@ import aiResponseParserTest from './AIResponseParser.test';
 import aiParseValidatorTest from './AIParseValidator.test';
 import reminderMapperTest from './ReminderMapper.test';
 import aiServiceTest from './AIService.test';
+import aiWorkflowIntegrationTest from './AIWorkflowIntegration.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -24,4 +25,5 @@ export default function testsuite() {
   aiParseValidatorTest();
   reminderMapperTest();
   aiServiceTest();
+  aiWorkflowIntegrationTest();
 }

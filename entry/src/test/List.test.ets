@@ -12,6 +12,8 @@ import reminderMapperTest from './ReminderMapper.test';
 import aiServiceTest from './AIService.test';
 import aiWorkflowIntegrationTest from './AIWorkflowIntegration.test';
 import aiEvalCorpusTest from './AIEvalCorpus.test';
+import timetableParseTest from './TimetableParse.test';
+import timetableServiceTest from './TimetableService.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -28,4 +30,6 @@ export default function testsuite() {
   aiServiceTest();
   aiWorkflowIntegrationTest();
   aiEvalCorpusTest();
+  timetableParseTest();
+  timetableServiceTest();
 }

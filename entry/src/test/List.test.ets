@@ -14,6 +14,7 @@ import aiWorkflowIntegrationTest from './AIWorkflowIntegration.test';
 import aiEvalCorpusTest from './AIEvalCorpus.test';
 import timetableParseTest from './TimetableParse.test';
 import timetableServiceTest from './TimetableService.test';
+import appServicesTest from './AppServices.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -32,4 +33,5 @@ export default function testsuite() {
   aiEvalCorpusTest();
   timetableParseTest();
   timetableServiceTest();
+  appServicesTest();
 }

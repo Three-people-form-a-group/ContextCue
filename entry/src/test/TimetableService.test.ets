@@ -21,6 +21,7 @@ class StubLocationPort implements LocationTriggerPort {
   unregistered: string[] = [];
   async register(reminder: Reminder): Promise<void> { this.registered.push(reminder.id); }
   async unregister(id: string): Promise<void> { this.unregistered.push(id); }
+  async isInsideScene(_sceneId: string): Promise<boolean> { return false; }
 }
 
 const MATH_WEEK8: number = new Date(2026, 9, 26, 8, 0).getTime();
@@ -113,7 +114,11 @@ export default function timetableServiceTest() {
       const saved = await stack.timetableService.saveTimetable(draft());
       expect(saved.data?.reminders.createdCount).assertEqual(3);
       const all = (await stack.reminderService.findAll()).data as Reminder[];
-      expect(all.find((r: Reminder): boolean => r.content === '大学英语')).assertUndefined();
+      // Nov 9 starts week 10: English still runs on Nov 11, but not in week 11 (Nov 18).
+      expect(all.find((r: Reminder): boolean => r.content === '大学英语')?.triggerTime)
+        .assertEqual(new Date(2026, 10, 11, 14, 0).getTime());
+      expect(all.find((r: Reminder): boolean => r.triggerTime === new Date(2026, 10, 18, 14, 0).getTime()))
+        .assertUndefined();
     });
     it('reports current week and semester boundaries', 0, async () => {
       const stack = new Stack(new Date(2026, 9, 26, 7, 0).getTime());

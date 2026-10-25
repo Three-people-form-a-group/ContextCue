@@ -17,7 +17,7 @@ function issue(code: TimetableParseIssueCode, field: string | undefined, message
   return { code: code, field: field, message: message };
 }
 
-function fieldIssue(code: TimetableParseIssueCode, field: string): TimetableParseIssue {
+function fieldIssue(code: TimetableParseIssueCode, field: string | undefined): TimetableParseIssue {
   return issue(code, field, '课程表数据格式不正确');
 }
 

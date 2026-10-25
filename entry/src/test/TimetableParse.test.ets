@@ -30,6 +30,16 @@ export default function timetableParseTest() {
       expect(parseTimetableData('{"semesterName":"s","anchorDate":"2026-10-26","anchorWeek":8,"courses":[]}').issues[0].code)
         .assertEqual(TimetableParseIssueCode.MISSING_FIELD);
     });
+    it('reports root-level format errors without inventing a field name', 0, () => {
+      const arrayRoot = parseTimetableData('[]');
+      expect(arrayRoot.value).assertUndefined();
+      expect(arrayRoot.issues[0].code).assertEqual(TimetableParseIssueCode.INVALID_FIELD);
+      expect(arrayRoot.issues[0].field).assertUndefined();
+      const wrongType = parseTimetableData('{"semesterName":8,"anchorDate":"2026-10-26","anchorWeek":8,"courses":[]}');
+      expect(wrongType.value).assertUndefined();
+      expect(wrongType.issues[0].code).assertEqual(TimetableParseIssueCode.INVALID_FIELD);
+      expect(wrongType.issues[0].field).assertUndefined();
+    });
     it('validates field ranges and calendar correctness', 0, () => {
       const bad = parseTimetableData('{"semesterName":"s","anchorDate":"2026-02-30","anchorWeek":8,' +
         '"courses":[{"name":"数学","dayOfWeek":8,"startTime":"24:00","endTime":"09:00","weeks":[0]}]}');

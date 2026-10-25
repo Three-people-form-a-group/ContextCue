@@ -28,12 +28,18 @@ class ThrowingProvider implements AIModelProvider {
   }
 }
 
+class HangingProvider implements AIModelProvider {
+  async requestParse(_text: string, _context: AIParseContext): Promise<AIProviderResult> {
+    return new Promise<AIProviderResult>(() => {});
+  }
+}
+
 export default function aiServiceTest() {
   describe('aiServiceTest', () => {
     const context: AIParseContext = { now: 1000, timeZone: 'Asia/Shanghai', locale: 'zh-CN' };
     it('makes valid BOTH input ready with resolved scene', 0, async () => {
       const fixtures = new Map<string, string>();
-      fixtures.set('input', '{"content":"带电脑","triggerType":"BOTH","triggerTime":2000,"sceneName":"实验室","ambiguous":false}');
+      fixtures.set('input', '{"content":"带电脑","triggerType":"BOTH","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":"实验室","ambiguous":false}');
       const resolver = new TestResolver();
       const outcome = await new DefaultAIService(new FakeAIModelProvider(fixtures), resolver).parseReminder('input', context);
       expect(outcome.status).assertEqual(AIParseStatus.READY);
@@ -60,7 +66,7 @@ export default function aiServiceTest() {
     });
     it('requires confirmation for past time without resolver call', 0, async () => {
       const fixtures = new Map<string, string>();
-      fixtures.set('input', '{"content":"带电脑","triggerType":"TIME","triggerTime":500,"sceneName":null,"ambiguous":false}');
+      fixtures.set('input', '{"content":"带电脑","triggerType":"TIME","triggerTime":"1970-01-01T00:00:00.500Z","sceneName":null,"ambiguous":false}');
       const resolver = new TestResolver();
       const outcome = await new DefaultAIService(new FakeAIModelProvider(fixtures), resolver).parseReminder('input', context);
       expect(outcome.status).assertEqual(AIParseStatus.NEEDS_CONFIRMATION);
@@ -96,6 +102,20 @@ export default function aiServiceTest() {
       expect(outcome.status).assertEqual(AIParseStatus.FAILED);
       expect(outcome.issues[0].field).assertEqual('now');
       expect(outcome.draft).assertUndefined();
+    });
+    it('fails retryably when the provider exceeds the timeout budget', 0, async () => {
+      const outcome = await new DefaultAIService(new HangingProvider(), new TestResolver(), 30).parseReminder('input', context);
+      expect(outcome.status).assertEqual(AIParseStatus.FAILED);
+      expect(outcome.issues[0].code).assertEqual(AIParseIssueCode.NETWORK_ERROR);
+      expect(outcome.issues[0].retryable).assertTrue();
+      expect(outcome.draft).assertUndefined();
+    });
+    it('accepts markdown-fenced responses and falls back to the default timeout budget', 0, async () => {
+      const fixtures = new Map<string, string>();
+      fixtures.set('input', '```json\n{"content":"带电脑","triggerType":"BOTH","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":"实验室","ambiguous":false}\n```');
+      const outcome = await new DefaultAIService(new FakeAIModelProvider(fixtures), new TestResolver(), -5).parseReminder('input', context);
+      expect(outcome.status).assertEqual(AIParseStatus.READY);
+      expect(outcome.draft?.triggerTime).assertEqual(2000);
     });
   });
 }

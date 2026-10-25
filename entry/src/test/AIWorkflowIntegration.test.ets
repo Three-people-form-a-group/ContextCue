@@ -95,7 +95,7 @@ class Workflow {
 export default function aiWorkflowIntegrationTest() {
   describe('aiWorkflowIntegrationTest', () => {
     it('keeps READY parsing side effect free until explicit confirmation', 0, async () => {
-      const w = new Workflow('{"content":"带电脑","triggerType":"BOTH","triggerTime":2000,"sceneName":"实验室","ambiguous":false}');
+      const w = new Workflow('{"content":"带电脑","triggerType":"BOTH","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":"实验室","ambiguous":false}');
       const parsed = await w.parse();
       expect(parsed.status).assertEqual(AIParseStatus.READY);
       expect((await w.repository.findAll()).length).assertEqual(0);
@@ -109,7 +109,7 @@ export default function aiWorkflowIntegrationTest() {
     });
 
     it('integrates AI TIME creation delivery and user completion', 0, async () => {
-      const w = new Workflow('{"content":"带电脑","triggerType":"TIME","triggerTime":2000,"sceneName":null,"ambiguous":false}');
+      const w = new Workflow('{"content":"带电脑","triggerType":"TIME","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":null,"ambiguous":false}');
       await w.confirm(await w.parse());
       expect(w.location.registered.length).assertEqual(0);
       await w.emit(TriggerCondition.TIME);
@@ -144,7 +144,7 @@ export default function aiWorkflowIntegrationTest() {
     });
 
     it('integrates BOTH without retaining an early historical scene entry', 0, async () => {
-      const w = new Workflow('{"content":"带电脑","triggerType":"BOTH","triggerTime":2000,"sceneName":"实验室","ambiguous":false}');
+      const w = new Workflow('{"content":"带电脑","triggerType":"BOTH","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":"实验室","ambiguous":false}');
       await w.confirm(await w.parse());
       w.location.inside = true;
       await w.emit(TriggerCondition.LOCATION);
@@ -161,7 +161,7 @@ export default function aiWorkflowIntegrationTest() {
     });
 
     it('rejects a draft whose time expired while the user was confirming', 0, async () => {
-      const w = new Workflow('{"content":"带电脑","triggerType":"TIME","triggerTime":2000,"sceneName":null,"ambiguous":false}');
+      const w = new Workflow('{"content":"带电脑","triggerType":"TIME","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":null,"ambiguous":false}');
       const parsed = await w.parse();
       if (parsed.draft === undefined) { throw new Error('Expected draft'); }
       w.now = 3000;
@@ -185,7 +185,7 @@ export default function aiWorkflowIntegrationTest() {
     });
 
     it('compensates time registration if AI BOTH location registration fails', 0, async () => {
-      const w = new Workflow('{"content":"带电脑","triggerType":"BOTH","triggerTime":2000,"sceneName":"实验室","ambiguous":false}');
+      const w = new Workflow('{"content":"带电脑","triggerType":"BOTH","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":"实验室","ambiguous":false}');
       const parsed = await w.parse();
       if (parsed.draft === undefined) { throw new Error('Expected draft'); }
       w.location.failRegister = true;
@@ -197,7 +197,7 @@ export default function aiWorkflowIntegrationTest() {
     });
 
     it('retains ACTIVE after delivery failure then retries without duplicate success', 0, async () => {
-      const w = new Workflow('{"content":"带电脑","triggerType":"TIME","triggerTime":2000,"sceneName":null,"ambiguous":false}');
+      const w = new Workflow('{"content":"带电脑","triggerType":"TIME","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":null,"ambiguous":false}');
       await w.confirm(await w.parse());
       w.now = 2000;
       w.notification.failNotify = true;

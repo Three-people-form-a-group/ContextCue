@@ -16,13 +16,37 @@ function outcome(status: AIParseStatus, issues: AIParseIssue[]): AIParseOutcome 
   return { status: status, issues: issues };
 }
 
+const DEFAULT_PROVIDER_TIMEOUT_MS: number = 15000;
+
 export class DefaultAIService implements AIService {
   private readonly provider: AIModelProvider;
   private readonly sceneResolver: SceneResolver;
+  private readonly providerTimeoutMs: number;
 
-  constructor(provider: AIModelProvider, sceneResolver: SceneResolver) {
+  constructor(provider: AIModelProvider, sceneResolver: SceneResolver,
+    providerTimeoutMs: number = DEFAULT_PROVIDER_TIMEOUT_MS) {
     this.provider = provider;
     this.sceneResolver = sceneResolver;
+    this.providerTimeoutMs = Number.isFinite(providerTimeoutMs) && providerTimeoutMs > 0
+      ? providerTimeoutMs : DEFAULT_PROVIDER_TIMEOUT_MS;
+  }
+
+  /**
+   * 服务级超时兜底：供应商 Promise 挂起时按预算返回可重试的 NETWORK_ERROR，
+   * 避免页面无限等待。正式 Provider 适配器仍应设置自己的 HTTP 超时。
+   */
+  private async requestWithTimeout(text: string, context: AIParseContext): Promise<AIProviderResult> {
+    let timerId: number = 0;
+    const timeoutPromise = new Promise<AIProviderResult>((resolve) => {
+      timerId = setTimeout(() => {
+        resolve({ failure: { code: AIParseIssueCode.NETWORK_ERROR, retryable: true } });
+      }, this.providerTimeoutMs);
+    });
+    try {
+      return await Promise.race([this.provider.requestParse(text, context), timeoutPromise]);
+    } finally {
+      clearTimeout(timerId);
+    }
   }
 
   async parseReminder(text: string, context: AIParseContext): Promise<AIParseOutcome> {
@@ -40,7 +64,7 @@ export class DefaultAIService implements AIService {
     }
     let providerResult: AIProviderResult;
     try {
-      providerResult = await this.provider.requestParse(text, context);
+      providerResult = await this.requestWithTimeout(text, context);
     } catch (_) {
       return outcome(AIParseStatus.FAILED, [issue(AIParseIssueCode.PROVIDER_ERROR, undefined, true)]);
     }

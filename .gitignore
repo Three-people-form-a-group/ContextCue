@@ -5,6 +5,9 @@ build/
 .hvigor/
 local.properties
 
+# DevEco App Analyzer artifacts
+.appanalyzer/
+
 # IDE files
 .idea/
 

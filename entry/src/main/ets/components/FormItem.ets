@@ -26,7 +26,7 @@ export struct FormItem {
         Text(this.badgeLabel)
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.surface_primary'))
+          .fontColor($r('app.color.archive_paper'))
           .backgroundColor($r('app.color.accent_olive'))
           .padding({
             left: 6,

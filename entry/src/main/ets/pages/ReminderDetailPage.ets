@@ -1,10 +1,11 @@
 import { StyleConstants } from '../common/StyleConstants';
+import { UiMode } from '../common/UiMode';
+import { Theme } from '../common/Theme';
 import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '../common/RouterConstants';
 import { UiReminderSource, UiReminderStatus, UiTriggerType } from '../common/UiReminderSemantics';
 import { UiReminderStore } from '../common/UiReminderStore';
 import { ReminderCardData } from '../components/ReminderCard';
 import { TopBar } from '../components/TopBar';
-import { OtterSlot, OtterState } from '../components/OtterSlot';
 
 /**
  * 提醒详情 —— 报纸中的一篇专题文章。
@@ -34,6 +35,7 @@ export struct ReminderDetailPage {
   // 编辑页保存后数据会改变；按 id 取最新记录，避免显示旧快照。
   // 版本号变化 → 重渲染 → 从 UI 数据源读取最新记录
   @StorageLink('uiReminderVersion') storeVersion: number = 0;
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
 
   aboutToAppear(): void {
     const params: Array<Object> =
@@ -85,32 +87,43 @@ export struct ReminderDetailPage {
           }
         })
         Scroll() {
-          Column() {
-            // 专题纸页：顶部一道朱红套色带
-            Column()
-              .width('100%')
-              .height(6)
-              .backgroundColor($r('app.color.detail_ink'))
-
+          Stack({ alignContent: Alignment.TopStart }) {
             Column() {
-              this.ArticleHead()
-              this.CompletedStamp()
-              this.MetaBlock()
-              this.EditorNote()
-              this.EditEntryBlock()
+              // 专题纸页：顶部一道复古深蓝色带
+              Column()
+                .width('100%')
+                .height(6)
+                .backgroundColor(Theme.accent(this.uiMode))
+
+              Column() {
+                this.ArticleHead()
+                this.CompletionStatus()
+                this.MetaBlock()
+                this.EditorNote()
+                this.EditEntryBlock()
+              }
+              .alignItems(HorizontalAlign.Start)
+              .width('100%')
+              .padding({
+                left: StyleConstants.PAGE_PADDING_H,
+                right: StyleConstants.PAGE_PADDING_H,
+                top: StyleConstants.SPACE_LG,
+                bottom: StyleConstants.SPACE_XXL
+              })
             }
             .alignItems(HorizontalAlign.Start)
             .width('100%')
-            .padding({
-              left: StyleConstants.PAGE_PADDING_H,
-              right: StyleConstants.PAGE_PADDING_H,
-              top: StyleConstants.SPACE_LG,
-              bottom: StyleConstants.SPACE_XXL
+            .backgroundColor(Theme.surface(this.uiMode))
+            .borderRadius({
+              topLeft: 0,
+              topRight: StyleConstants.RADIUS_LG,
+              bottomLeft: 0,
+              bottomRight: 0
             })
           }
-          .alignItems(HorizontalAlign.Start)
           .width('100%')
-          .backgroundColor($r('app.color.surface_primary'))
+          .backgroundColor(Color.Transparent)
+
           .borderRadius({
             topLeft: 0,
             topRight: StyleConstants.RADIUS_LG,
@@ -120,7 +133,7 @@ export struct ReminderDetailPage {
           .margin({
             left: 12,
             right: 12,
-            top: 8,
+            top: 12,
             bottom: 12
           })
         }
@@ -129,10 +142,10 @@ export struct ReminderDetailPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.background_primary'))
+      .backgroundColor(Theme.bg(this.uiMode))
     }
     .hideTitleBar(true)
-    .backgroundColor($r('app.color.background_primary'))
+    .backgroundColor(Theme.bg(this.uiMode))
     .onShown(() => {
       this.refreshFromStore();
     })
@@ -146,11 +159,11 @@ export struct ReminderDetailPage {
         Column()
           .width(3)
           .height(14)
-          .backgroundColor($r('app.color.detail_ink'))
-        Text(this.displayCard().isLocationOnly() ? 'FIELD NOTE' : 'FEATURE')
+          .backgroundColor(Theme.accent(this.uiMode))
+        Text(this.displayCard().isLocationOnly() ? '地点便笺' : '事项详情')
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(Theme.text(this.uiMode))
           .letterSpacing(2)
         Blank()
         Text(this.displayCard().statusText())
@@ -165,7 +178,7 @@ export struct ReminderDetailPage {
       Column()
         .width('100%')
         .height(StyleConstants.RULE_HEAVY)
-        .backgroundColor($r('app.color.text_primary'))
+        .backgroundColor(Theme.text(this.uiMode))
 
       Text(formatDateLabel(this.displayCard().triggerTime))
         .fontSize(StyleConstants.FONT_CAPTION)
@@ -181,7 +194,7 @@ export struct ReminderDetailPage {
           ? StyleConstants.FONT_TITLE_LG
           : StyleConstants.FONT_TIME_DISPLAY)
         .fontWeight(900)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(Theme.text(this.uiMode))
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         // 连续下划线：标在时间数字正下方
@@ -193,7 +206,7 @@ export struct ReminderDetailPage {
       Text(this.displayCard().content === '' ? '未命名提醒' : this.displayCard().content)
         .fontSize(StyleConstants.FONT_TITLE_LG)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(Theme.text(this.uiMode))
         .maxLines(3)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
@@ -203,7 +216,7 @@ export struct ReminderDetailPage {
       Column()
         .width(StyleConstants.RULE_SHORT_WIDTH)
         .height(StyleConstants.RULE_MEDIUM)
-        .backgroundColor($r('app.color.text_primary'))
+        .backgroundColor(Theme.text(this.uiMode))
         .margin({ top: StyleConstants.SPACE_SM })
     }
     .alignItems(HorizontalAlign.Start)
@@ -212,7 +225,7 @@ export struct ReminderDetailPage {
 
   /**
    * 字段行：标签在左、值在右。
-   * asTag=true 时，值渲染成「鼠尾草色块标签」—— 这是真实色域，而不是把文字染绿。
+   * asTag=true 时，地点值用朱褐墨色和下划线标记。
    */
   @Builder
   MetaRow(label: string, value: string, asTag: boolean) {
@@ -228,14 +241,8 @@ export struct ReminderDetailPage {
         Text(value)
           .fontSize(StyleConstants.FONT_BODY_SM)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.surface_primary'))
-          .padding({
-            left: StyleConstants.SPACE_SM,
-            right: StyleConstants.SPACE_SM,
-            top: 4,
-            bottom: 4
-          })
-          .backgroundColor($r('app.color.detail_note_alt'))
+          .fontColor(Theme.accent(this.uiMode))
+          .decoration({ type: TextDecorationType.Underline })
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
@@ -244,7 +251,7 @@ export struct ReminderDetailPage {
         Text(value)
           .fontSize(StyleConstants.FONT_BODY)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(Theme.text(this.uiMode))
           .layoutWeight(1)
           .textAlign(TextAlign.End)
           .maxLines(2)
@@ -268,49 +275,23 @@ export struct ReminderDetailPage {
       .opacity(0.35)
   }
 
-  /** 已完成提醒的信息页：水獭 editor_finish 结案标记 */
   @Builder
-  CompletedStamp() {
+  CompletionStatus() {
     if (this.displayCard().isCompleted()) {
-      Row({ space: StyleConstants.SPACE_LG }) {
-        OtterSlot({
-          state: OtterState.SUCCESS,
-          slotWidth: 96
-        })
-        Column({ space: StyleConstants.SPACE_XS }) {
-          Row({ space: StyleConstants.SPACE_XS }) {
-            Column()
-              .width(3)
-              .height(14)
-              .backgroundColor($r('app.color.detail_ink'))
-            Text('SEALED')
-              .fontSize(StyleConstants.FONT_SECTION_INDEX)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.detail_note'))
-              .letterSpacing(2)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-
-          Text('这条提醒已经完成并归档')
-            .fontSize(StyleConstants.FONT_BODY_SM)
-            .fontColor($r('app.color.detail_note'))
-            .maxLines(2)
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
+      Row({ space: 8 }) {
+        Text('✓')
+          .fontSize(17)
+          .fontWeight(900)
+          .fontColor(Theme.ink(this.uiMode))
+        Text('已完成')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.sub(this.uiMode))
       }
       .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding(StyleConstants.SPACE_MD)
-      .margin({ top: StyleConstants.SPACE_MD })
-      .backgroundColor($r('app.color.surface_secondary'))
-      .borderRadius({
-        topLeft: 0,
-        topRight: StyleConstants.RADIUS_LG,
-        bottomLeft: 0,
-        bottomRight: StyleConstants.RADIUS_SM
-      })
+      .padding({ top: 8, bottom: 8 })
+      .margin({ top: 12 })
+      .border({ width: { top: 1, bottom: 1 }, color: Theme.rule(this.uiMode) })
     }
   }
 
@@ -320,7 +301,7 @@ export struct ReminderDetailPage {
       Column()
         .width('100%')
         .height(StyleConstants.RULE_MEDIUM)
-        .backgroundColor($r('app.color.text_primary'))
+        .backgroundColor(Theme.text(this.uiMode))
       this.MetaRow('触发类型', this.displayCard().typeText(), false)
       this.MetaDivider()
       this.MetaRow('提醒来源', this.displayCard().sourceText(), false)
@@ -337,10 +318,10 @@ export struct ReminderDetailPage {
   @Builder
   EditorNote() {
     Column({ space: StyleConstants.SPACE_XS }) {
-      Text('EDITOR’S NOTE')
+      Text('编辑批注')
         .fontSize(StyleConstants.FONT_SECTION_INDEX)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.detail_ink'))
+        .fontColor(Theme.accent(this.uiMode))
         .letterSpacing(2)
       Text('AI 辅助与情境建议将在这里以批注形式出现')
         .fontSize(StyleConstants.FONT_BODY_SM)
@@ -374,18 +355,18 @@ export struct ReminderDetailPage {
           Text('编辑此提醒')
             .fontSize(StyleConstants.FONT_BODY)
             .fontWeight(900)
-            .fontColor($r('app.color.surface_primary'))
+            .fontColor($r('app.color.archive_paper'))
           Text('→')
             .fontSize(StyleConstants.FONT_BODY)
             .fontWeight(900)
-            .fontColor($r('app.color.surface_primary'))
+            .fontColor($r('app.color.archive_paper'))
         }
         .height(52)
         .padding({
           left: StyleConstants.SPACE_XXXL,
           right: StyleConstants.SPACE_XXXL
         })
-        .backgroundColor($r('app.color.text_primary'))
+        .backgroundColor(Theme.text(this.uiMode))
         .borderRadius({
           topLeft: 0,
           topRight: StyleConstants.RADIUS_MD,

@@ -1,6 +1,20 @@
 import { StyleConstants } from '../common/StyleConstants';
 import { PocketwatchMark } from './PocketwatchMark';
 
+// 保留透明通道，让裁边沿海獭轮廓出现。
+const PAPER_EDGE: ColorFilter = new ColorFilter([
+  0, 0, 0, 0, 0.99,
+  0, 0, 0, 0, 0.96,
+  0, 0, 0, 0, 0.89,
+  0, 0, 0, 1, 0
+]);
+const PRINT_INK: ColorFilter = new ColorFilter([
+  0.59, 0.29, 0.06, 0, 0.04,
+  0.17, 0.66, 0.06, 0, 0.04,
+  0.14, 0.28, 0.45, 0, 0.03,
+  0, 0, 0, 1, 0
+]);
+
 /**
  * 水獭角色状态。本阶段只用于选择静态图片，不实现状态机与动画。
  * 未来接入 Lottie 时，只需替换本组件内部的渲染实现，所有调用点保持不变。
@@ -23,7 +37,7 @@ export class OtterState {
  * 因此引用形式为 $r('app.media.otter_reminder') 这类平铺名称。
  *
  * 缩放：按原图宽高比渲染（aspectRatio），objectFit 为 Contain，保证不变形；
- * 不设置任何背景色，保留 PNG 的透明通道。
+ * 纸边跟随透明角色图的轮廓，四种角色状态共用同一种印刷调色。
  *
  * 降级：图片加载失败时回退为几何怀表母题，不引用任何不存在的资源路径。
  */
@@ -73,14 +87,30 @@ export struct OtterSlot {
       // 降级：不引用缺失资源，用已有几何母题兜底
       PocketwatchMark({ dialSize: this.slotWidth * 0.62 })
     } else {
-      Image(this.imageSource())
-        .width(this.slotWidth)
-        .aspectRatio(this.imageAspect())
-        .objectFit(ImageFit.Contain)
-        .interpolation(ImageInterpolation.High)
-        .onError(() => {
-          this.loadFailed = true;
-        })
+      Stack({ alignContent: Alignment.Center }) {
+        ForEach([0, 1, 2, 3], (edge: number) => {
+          Image(this.imageSource())
+            .width('94%')
+            .height('94%')
+            .objectFit(ImageFit.Contain)
+            .colorFilter(PAPER_EDGE)
+            .offset({ x: edge < 2 ? (edge === 0 ? -1.5 : 1.5) : 0,
+              y: edge >= 2 ? (edge === 2 ? -1.5 : 1.5) : 0 })
+            .accessibilityLevel('no')
+        }, (edge: number) => `${edge}`)
+
+        Image(this.imageSource())
+          .width('94%')
+          .height('94%')
+          .objectFit(ImageFit.Contain)
+          .colorFilter(PRINT_INK)
+          .interpolation(ImageInterpolation.High)
+          .onError(() => {
+            this.loadFailed = true;
+          })
+      }
+      .width(this.slotWidth)
+      .aspectRatio(this.imageAspect())
     }
   }
 }

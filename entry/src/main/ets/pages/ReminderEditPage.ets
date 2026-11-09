@@ -1,5 +1,7 @@
 import { promptAction } from '@kit.ArkUI';
 import { StyleConstants } from '../common/StyleConstants';
+import { UiMode } from '../common/UiMode';
+import { Theme } from '../common/Theme';
 import { RouterConstants, ReminderEditNavParam } from '../common/RouterConstants';
 import { UiReminderStore } from '../common/UiReminderStore';
 import { parseTimeInput, TimeParseResult } from '../common/UiTimeInputParser';
@@ -19,8 +21,9 @@ import { FormItem } from '../components/FormItem';
 @Component
 export struct ReminderEditPage {
   pathStack: NavPathStack = new NavPathStack();
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
   @State pageTitle: string = '新建提醒';
-  @State pageOverline: string = 'NEW REMINDER';
+  @State pageOverline: string = '草稿';
   @State titleInput: string = '';
   @State selectedTimeMs: number = 0;
   @State manualInput: string = '';
@@ -37,7 +40,7 @@ export struct ReminderEditPage {
       const last: Object = params[params.length - 1];
       if (last instanceof ReminderEditNavParam && last.mode === RouterConstants.EDIT_MODE_EDIT) {
         this.pageTitle = '编辑提醒';
-        this.pageOverline = 'EDIT REMINDER';
+        this.pageOverline = '修改中';
         if (last.data !== undefined) {
           this.original = last.data;
           this.titleInput = last.data.content;
@@ -277,29 +280,25 @@ export struct ReminderEditPage {
             top: StyleConstants.SPACE_LG,
             bottom: StyleConstants.SPACE_XXL
           })
-          .backgroundColor($r('app.color.surface_primary'))
+          .backgroundColor(Theme.surface(this.uiMode))
           .borderRadius({
             topLeft: 0,
-            topRight: StyleConstants.RADIUS_LG,
+            topRight: 18,
             bottomLeft: 0,
             bottomRight: 0
-          })
-          .margin({
-            left: 12,
-            right: 12,
-            top: 8,
-            bottom: 12
           })
         }
         .scrollBar(BarState.Off)
         .layoutWeight(1)
+        .width('100%')
+        .padding({ left: 14, right: 14, top: 7, bottom: 12 })
       }
       .width('100%')
       .height('100%')
-      .backgroundColor($r('app.color.background_primary'))
+      .backgroundColor(Theme.bg(this.uiMode))
     }
     .hideTitleBar(true)
-    .backgroundColor($r('app.color.background_primary'))
+    .backgroundColor(Theme.bg(this.uiMode))
     .onBackPressed(() => {
       this.requestExit();
       return true;
@@ -308,47 +307,25 @@ export struct ReminderEditPage {
 
   @Builder
   MastheadBlock() {
-    Column() {
-      Row() {
-        Text('FORM')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .letterSpacing(2)
-        Blank()
-        Text(this.pageOverline)
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
-          .letterSpacing(2)
-      }
-      .width('100%')
-      .height(20)
-      .alignItems(VerticalAlign.Center)
-
-      Column()
-        .width('100%')
-        .height(StyleConstants.RULE_HEAVY)
-        .backgroundColor($r('app.color.text_primary'))
-
-      Row() {
-        Text(this.pageTitle)
-          .fontSize(StyleConstants.FONT_DISPLAY)
-          .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
-        Blank()
-        Column()
-          .width(36)
-          .height(4)
-          .backgroundColor($r('app.color.detail_ink'))
-          .margin({ top: StyleConstants.SPACE_XL })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Bottom)
-      .margin({ top: StyleConstants.SPACE_SM })
+    Row({ space: 6 }) {
+      Text(this.pageTitle)
+        .fontSize(30)
+        .fontWeight(900)
+        .fontColor(Theme.text(this.uiMode))
+        .layoutWeight(1)
+      Text(this.pageOverline)
+        .fontSize(12)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.archive_ink'))
+        .padding({ left: 11, right: 11, top: 7, bottom: 7 })
+        .backgroundImage(this.uiMode === UiMode.JOURNAL ? $r('app.media.ticket_coral') : undefined)
+        .backgroundImageSize({ width: '100%', height: '100%' })
+        .rotate({ angle: this.uiMode === UiMode.JOURNAL ? -3 : 0 })
     }
-    .alignItems(HorizontalAlign.Start)
     .width('100%')
+    .padding({ bottom: 9 })
+    .border({ width: { bottom: 2 }, color: Theme.rule(this.uiMode) })
+    .alignItems(VerticalAlign.Center)
   }
 
   /** 悬挂大编号 */
@@ -374,7 +351,7 @@ export struct ReminderEditPage {
         Text(title)
           .fontSize(StyleConstants.FONT_TITLE_LG)
           .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(Theme.text(this.uiMode))
         Blank()
       }
       .width('100%')
@@ -383,7 +360,7 @@ export struct ReminderEditPage {
       Column()
         .width('100%')
         .height(StyleConstants.RULE_MEDIUM)
-        .backgroundColor($r('app.color.text_primary'))
+        .backgroundColor(Theme.text(this.uiMode))
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
@@ -435,9 +412,9 @@ export struct ReminderEditPage {
   @Builder
   ContentSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('01', $r('app.color.detail_ink'))
+      this.SectionNumber('01', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('提醒内容', $r('app.color.detail_ink'))
+        this.SectionHead('提醒内容', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
 
         TextArea({
           placeholder: '输入提醒内容',
@@ -449,23 +426,19 @@ export struct ReminderEditPage {
           })
           .fontSize(StyleConstants.FONT_BODY + 2)
           .fontWeight(FontWeight.Regular)
-          .fontColor($r('app.color.text_primary'))
-          .placeholderColor($r('app.color.text_secondary'))
+          .fontColor(Theme.text(this.uiMode))
+          .placeholderColor(Theme.sub(this.uiMode))
           .backgroundColor(Color.Transparent)
           .padding({
-            left: 0,
-            right: 0,
+            left: 8,
+            right: 8,
             top: StyleConstants.SPACE_SM,
             bottom: StyleConstants.SPACE_SM
           })
           .lineHeight(32)
           .height(this.inputHeight())
           .width('100%')
-          // 连续下划线：跟随实际换行，颜色与详情页同一支红
-          .decoration({
-            type: TextDecorationType.Underline,
-            color: $r('app.color.detail_ink')
-          })
+          .border({ width: { bottom: 1 }, color: Theme.rule(this.uiMode) })
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -478,9 +451,9 @@ export struct ReminderEditPage {
   @Builder
   TimeSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('02', $r('app.color.brand_primary'))
+      this.SectionNumber('02', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('日期与时间', $r('app.color.brand_primary'))
+        this.SectionHead('日期与时间', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
         if (this.timeRelevant()) {
           FormItem({
             label: '日期',
@@ -503,14 +476,14 @@ export struct ReminderEditPage {
             Text('所选时间已过去，请重新选择')
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
+              .fontColor(Theme.text(this.uiMode))
               .margin({ top: StyleConstants.SPACE_XS })
           }
           this.ManualTimeRow()
         } else {
           Text('地点提醒不含固定时间')
             .fontSize(StyleConstants.FONT_BODY_SM)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(Theme.sub(this.uiMode))
             .padding({
               top: StyleConstants.SPACE_MD,
               bottom: StyleConstants.SPACE_MD
@@ -537,8 +510,8 @@ export struct ReminderEditPage {
             this.manualInput = value;
           })
           .fontSize(StyleConstants.FONT_BODY_SM)
-          .fontColor($r('app.color.text_primary'))
-          .placeholderColor($r('app.color.text_secondary'))
+          .fontColor(Theme.text(this.uiMode))
+          .placeholderColor(Theme.sub(this.uiMode))
           .backgroundColor(Color.Transparent)
           .padding({ left: 0, right: 0 })
           .height(48)
@@ -547,7 +520,7 @@ export struct ReminderEditPage {
         Text('解析')
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(Theme.text(this.uiMode))
           .decoration({ type: TextDecorationType.Underline })
           .textAlign(TextAlign.Center)
           .height(StyleConstants.TOUCH_TARGET_MIN)
@@ -563,12 +536,12 @@ export struct ReminderEditPage {
       .alignItems(VerticalAlign.Center)
       .border({
         width: { bottom: StyleConstants.HAIRLINE_HEIGHT },
-        color: $r('app.color.border_subtle')
+        color: Theme.rule(this.uiMode)
       })
 
       Text('支持 15:30、下午3点半、明天、2027年3月5日、10月20日 15:30 等写法')
         .fontSize(StyleConstants.FONT_SECTION_INDEX)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(Theme.sub(this.uiMode))
         .opacity(0.85)
         .maxLines(2)
     }
@@ -580,9 +553,9 @@ export struct ReminderEditPage {
   @Builder
   TriggerSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('03', $r('app.color.accent_olive'))
+      this.SectionNumber('03', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('触发条件', $r('app.color.accent_olive'))
+        this.SectionHead('触发条件', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
         FormItem({
           label: '触发类型',
           value: this.triggerTypeText(),
@@ -612,17 +585,17 @@ export struct ReminderEditPage {
   @Builder
   EditorNote() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('04', $r('app.color.detail_ink'))
+      this.SectionNumber('04', Theme.ink(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
         Row({ space: StyleConstants.SPACE_SM }) {
           Column()
             .width(3)
             .height(14)
-            .backgroundColor($r('app.color.detail_ink'))
+            .backgroundColor(Theme.accent(this.uiMode))
           Text('AI 辅助')
             .fontSize(StyleConstants.FONT_TITLE_LG)
             .fontWeight(900)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(Theme.text(this.uiMode))
           Blank()
         }
         .width('100%')
@@ -630,15 +603,12 @@ export struct ReminderEditPage {
 
         Text('接入 AI 模块后，这里会根据自然语言生成时间与地点建议')
           .fontSize(StyleConstants.FONT_BODY_SM)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(Theme.sub(this.uiMode))
           .maxLines(3)
           .padding(StyleConstants.SPACE_MD)
-          .border({
-            width: StyleConstants.RULE_MEDIUM,
-            color: $r('app.color.detail_ink'),
-            style: BorderStyle.Dashed
-          })
           .width('100%')
+          .backgroundColor(Theme.subtleBg(this.uiMode))
+          .border({ width: { left: 3 }, color: $r('app.color.accent_mint') })
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -655,21 +625,20 @@ export struct ReminderEditPage {
         Text(this.saveError)
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(Theme.text(this.uiMode))
           .maxLines(2)
           .width('100%')
       }
-      // 印刷式操作条：整条暖橙，文字在左、箭头在右
       Row() {
         Text('保存提醒')
           .fontSize(StyleConstants.FONT_BODY)
           .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor($r('app.color.archive_paper'))
         Blank()
         Text('→')
           .fontSize(StyleConstants.FONT_BODY)
           .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor($r('app.color.archive_paper'))
       }
       .width('100%')
       .height(52)
@@ -677,7 +646,7 @@ export struct ReminderEditPage {
         left: StyleConstants.SPACE_LG,
         right: StyleConstants.SPACE_LG
       })
-      .backgroundColor($r('app.color.accent_primary'))
+      .backgroundColor($r('app.color.archive_ink'))
       .onClick(() => {
         this.save();
       })

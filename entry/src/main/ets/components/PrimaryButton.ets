@@ -15,12 +15,12 @@ export struct PrimaryButton {
         Text('+')
           .fontSize(22)
           .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor($r('app.color.archive_paper'))
       }
       Text(this.label)
         .fontSize(StyleConstants.FONT_BODY)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor($r('app.color.archive_paper'))
     }
     .justifyContent(FlexAlign.Center)
     .height(48)

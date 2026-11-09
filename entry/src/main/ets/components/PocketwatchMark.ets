@@ -96,7 +96,7 @@ export struct PocketwatchMark {
       if (this.showHands) {
         // 时针：短而重，Charcoal
         this.Hand(this.dialSize * 0.24, 3.5, $r('app.color.text_primary'), this.hourAngle)
-        // 分针：长而细，Pocketwatch Orange —— 暖橙作为"时间的现在"出现
+        // 分针：长而细，用墨蓝绿色标记"时间的现在"
         this.Hand(this.dialSize * 0.36, 2, $r('app.color.accent_primary'), this.minuteAngle)
         // 中心轴
         Column()

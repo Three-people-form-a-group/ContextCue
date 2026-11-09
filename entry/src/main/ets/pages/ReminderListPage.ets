@@ -1,16 +1,18 @@
 import { StyleConstants } from '../common/StyleConstants';
+import { UiMode } from '../common/UiMode';
+import { Theme } from '../common/Theme';
 import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '../common/RouterConstants';
 import { MockReminderData, ReminderGroupData } from '../common/MockReminderData';
 import { UiReminderStore } from '../common/UiReminderStore';
-import { ReminderCardData, ReminderCard, SlipRole } from '../components/ReminderCard';
-import { SettingsGear } from '../components/SettingsGear';
-import { EmptyState } from '../components/EmptyState';
+import { ReminderCardData } from '../components/ReminderCard';
+import { TimetableView } from '../components/TimetableView';
 
 /**
- * 全部提醒页 —— 报纸的栏目索引。
+ * 日程页：列表内嵌月历，课表使用独立滚动区域。
  *
  * 与首页（视觉个性）分工不同：本页强调查找效率。
  * 用粗黑栏目标题 + 粗细分隔线 + 宽松文字行组织，而不是重复首页的拼贴效果。
+ * 设置只由底部 Tab 进入，本页不再提供齿轮入口，避免重复入口。
  */
 @Component
 export struct ReminderListPage {
@@ -19,11 +21,15 @@ export struct ReminderListPage {
   // 编辑页保存后由 AppStorage 通知刷新；按 id 用最新记录替换分组里的旧对象
   // 版本号变化 → 重渲染 → 从 UI 数据源读取最新记录
   @StorageLink('uiReminderVersion') storeVersion: number = 0;
-  /** 'index' 索引视图 / 'calendar' 日历视图 */
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
+  /** 'index' 列表视图（含内嵌月历）/ 'timetable' 课表视图 */
   @State viewMode: string = 'index';
   @State calYear: number = 0;
   @State calMonth: number = 0;
+  /** 0 表示不按日期筛选，显示全部 */
   @State selectedDay: number = 0;
+  /** 月历默认收起，避免长期占用列表空间 */
+  @State calExpanded: boolean = false;
 
   aboutToAppear(): void {
     const now: Date = new Date();
@@ -117,20 +123,6 @@ export struct ReminderListPage {
     return wd[new Date(this.calYear, this.calMonth - 1, day).getDay()];
   }
 
-  /** 日历选中日的版面角色：与首页同一套语言 */
-  private dayRole(item: ReminderCardData, index: number): string {
-    if (item.isCompleted()) {
-      return SlipRole.ARCHIVE;
-    }
-    if (index === 0) {
-      return SlipRole.LEAD;
-    }
-    if (item.isLocationOnly()) {
-      return SlipRole.FIELD;
-    }
-    return SlipRole.EDITORIAL;
-  }
-
   private shiftMonth(delta: number): void {
     let m: number = this.calMonth + delta;
     let y: number = this.calYear;
@@ -213,200 +205,291 @@ export struct ReminderListPage {
     return this.sortItems(base.concat(extra));
   }
 
-  /** 索引页的版面角色：只突出今日第一条，其余用无纸面文字栏，地点用情境色块。 */
-  private roleOf(item: ReminderCardData, groupIndex: number, itemIndex: number): string {
-    if (groupIndex === 0 && itemIndex === 0) {
-      return SlipRole.LEAD;
-    }
-    if (item.hasLocation()) {
-      return SlipRole.FIELD;
-    }
-    return SlipRole.EDITORIAL;
-  }
-
   build() {
-    Scroll() {
+    if (this.viewMode === 'timetable') {
+      // 课表视图自带 Scroll，不能再套在外层 Scroll 里，否则内层滚动失效
       Column() {
-        this.HeaderBlock()
-        if (this.viewMode === 'index') {
-          this.GroupListBlock()
-          this.PlacesBlock()
-        } else {
-          this.CalendarBlock()
-          this.CalendarDayList()
+        Column() {
+          this.HeaderBlock()
         }
+        .width('100%')
+        .padding({
+          left: StyleConstants.PAGE_PADDING_H,
+          right: StyleConstants.PAGE_PADDING_H,
+          top: StyleConstants.SPACE_LG
+        })
+
+        Column() {
+          TimetableView()
+        }
+        .layoutWeight(1)
+        .width('100%')
       }
-      .alignItems(HorizontalAlign.Start)
       .width('100%')
-      .padding({
-        left: StyleConstants.PAGE_PADDING_H,
-        right: StyleConstants.PAGE_PADDING_H,
-        top: StyleConstants.SPACE_LG,
-        bottom: StyleConstants.SPACE_XXXL
-      })
+      .height('100%')
+    } else {
+      Scroll() {
+        Column() {
+          this.HeaderBlock()
+          // 日历不再是独立视图，而是列表页顶部可展开的一块
+          this.CalendarBlock()
+          if (this.selectedDay === 0) {
+            this.GroupListBlock()
+          } else {
+            this.CalendarDayList()
+          }
+        }
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding({
+          left: StyleConstants.PAGE_PADDING_H,
+          right: StyleConstants.PAGE_PADDING_H,
+          top: StyleConstants.SPACE_LG,
+          bottom: StyleConstants.SPACE_XXXL
+        })
+      }
+      .scrollBar(BarState.Off)
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Theme.bg(this.uiMode))
     }
-    .scrollBar(BarState.Off)
-    .width('100%')
-    .height('100%')
   }
 
-  @Builder
-  NewEntryTag() {
-    Row({ space: StyleConstants.SPACE_XS }) {
-      Text('+')
-        .fontSize(StyleConstants.FONT_BODY)
-        .fontWeight(900)
-        .fontColor($r('app.color.text_primary'))
-      Text('新建')
-        .fontSize(StyleConstants.FONT_BODY_SM)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(1)
-    }
-    .height(StyleConstants.TOUCH_TARGET_MIN)
-    .padding({
-      left: StyleConstants.SPACE_LG,
-      right: StyleConstants.SPACE_LG
-    })
-    .backgroundColor($r('app.color.accent_primary'))
-    .justifyContent(FlexAlign.Center)
-    .onClick(() => {
-      this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
-        new ReminderEditNavParam(RouterConstants.EDIT_MODE_CREATE));
-    })
-  }
-
+  /**
+   * 页头：不对称排版 —— 左侧标题块，右侧细小的视图切换；
+   * 下方粗线只走 78%，右侧留白。
+   */
   @Builder
   HeaderBlock() {
     Column() {
-      Row({ space: StyleConstants.SPACE_SM }) {
-        Text('INDEX')
-          .fontSize(StyleConstants.FONT_CAPTION)
-          .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
-          .letterSpacing(2)
-          .maxLines(1)
-        Blank()
-        Text('NO.017')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
-          .letterSpacing(2)
-        // 设置不再是底部 Tab，索引页同样提供入口
-        SettingsGear({
-          onTap: () => {
-            this.pathStack.pushPathByName(RouterConstants.PAGE_SETTINGS, '');
-          }
-        })
-      }
-      .width('100%')
-      .height(StyleConstants.TOUCH_TARGET_MIN)
-      .alignItems(VerticalAlign.Center)
-
-      Column()
-        .width('100%')
-        .height(StyleConstants.RULE_HEAVY)
-        .backgroundColor($r('app.color.text_primary'))
-
-      Row({ space: StyleConstants.SPACE_MD }) {
-        Column({ space: StyleConstants.SPACE_XS }) {
-          Text('全部提醒')
-            .fontSize(StyleConstants.FONT_DISPLAY)
+      Row() {
+        Column({ space: 1 }) {
+          Text('日程')
+            .fontSize(28)
             .fontWeight(900)
-            .fontColor($r('app.color.text_primary'))
-          Text('按日期编排的提醒索引')
-            .fontSize(StyleConstants.FONT_CAPTION)
-            .fontColor($r('app.color.text_secondary'))
-            .letterSpacing(1)
+            .fontColor(Theme.ink(this.uiMode))
         }
-        .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
-
-        this.NewEntryTag()
-      }
-      .width('100%')
-      .margin({ top: StyleConstants.SPACE_MD, bottom: StyleConstants.SPACE_SM })
-
-      Column()
-        .width('100%')
-        .height(StyleConstants.HAIRLINE_HEIGHT)
-        .backgroundColor($r('app.color.accent_secondary'))
-
-      Row({ space: StyleConstants.SPACE_XS }) {
         Blank()
-        Text(this.viewMode === 'index' ? '日历视图' : '返回索引')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.detail_ink'))
-          .decoration({ type: TextDecorationType.Underline })
-        Text(this.viewMode === 'index' ? '→' : '←')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.detail_ink'))
+        this.ViewModeItem('列表', 'index')
+        this.ViewModeItem('课表', 'timetable')
+        if (this.viewMode !== 'timetable') {
+          Text('＋')
+            .fontSize(18)
+            .fontWeight(900)
+            .fontColor(Theme.accent(this.uiMode))
+            .width(30)
+            .height(36)
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
+                new ReminderEditNavParam(RouterConstants.EDIT_MODE_CREATE));
+            })
+        }
       }
       .width('100%')
-      .height(StyleConstants.TOUCH_TARGET_MIN)
-      .alignItems(VerticalAlign.Center)
-      .onClick(() => {
-        this.viewMode = this.viewMode === 'index' ? 'calendar' : 'index';
-        this.selectedDay = 0;
-      })
+      .height(54)
+      .alignItems(VerticalAlign.Bottom)
+
+      Row() {
+        Column()
+          .width('78%')
+          .height(StyleConstants.RULE_HEAVY)
+          .backgroundColor(Theme.ink(this.uiMode))
+        Blank()
+      }
+      .width('100%')
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .margin({ bottom: StyleConstants.SPACE_LG })
+    .margin({ bottom: StyleConstants.SPACE_MD })
   }
 
   @Builder
+  ViewModeItem(label: string, mode: string) {
+    Text(label)
+      .fontSize(13)
+      .fontWeight(this.viewMode === mode ? 900 : FontWeight.Medium)
+      .fontColor(this.viewMode === mode
+        ? Theme.ink(this.uiMode)
+        : Theme.sub(this.uiMode))
+      .height(44)
+      .padding({ left: 8, right: 8 })
+      .textAlign(TextAlign.Center)
+      .decoration({
+        type: this.viewMode === mode ? TextDecorationType.Underline : TextDecorationType.None,
+        color: Theme.accent(this.uiMode)
+      })
+      .onClick(() => {
+        this.viewMode = mode;
+        this.selectedDay = 0;
+      })
+  }
+
+  /** 分组配色轮换：珊瑚 / 芥末 / 薄荷 / 天蓝，让整页有节奏而不是一片墨色 */
+  private groupAccent(index: number): Resource {
+    const tones: Resource[] = [
+      $r('app.color.accent_coral'),
+      $r('app.color.accent_mustard'),
+      $r('app.color.accent_mint'),
+      $r('app.color.accent_sky')
+    ];
+    return tones[index % tones.length];
+  }
+
+  /** 分组标题：衬线大编号 + 组名 + 条数，分隔线从编号右侧起、不到底。 */
+  @Builder
   GroupHeader(group: ReminderGroupData, groupIndex: number) {
-    Column() {
-      Row({ space: StyleConstants.SPACE_SM }) {
-        Text(group.groupOverline)
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.accent_vermilion'))
-          .letterSpacing(2)
-        Text(group.groupLabel)
-          .fontSize(StyleConstants.FONT_TITLE_LG)
+    Column({ space: 4 }) {
+      Row() {
+        Text(`${groupIndex < 9 ? '0' : ''}${groupIndex + 1}`)
+          .fontFamily('serif')
+          .fontSize(32)
           .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
-        Blank()
-        Text(`${this.liveGroupItems(group, groupIndex).length}`)
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(Theme.ink(this.uiMode))
+          .width(56)
+        Column({ space: 1 }) {
+          Row({ space: 6 }) {
+            if (this.uiMode === UiMode.JOURNAL) {
+              Column()
+                .width(10)
+                .height(10)
+                .backgroundColor(this.groupAccent(groupIndex))
+            } else {
+              // 极简模式：今天实心深橙、明天空心深橙、其余灰点
+              Column()
+                .width(groupIndex === 0 ? 8 : 7)
+                .height(groupIndex === 0 ? 8 : 7)
+                .borderRadius(4)
+                .backgroundColor(groupIndex === 0 ? Theme.alert(this.uiMode) : Color.Transparent)
+                .border({
+                  width: groupIndex === 1 ? 1.5 : 0,
+                  color: Theme.alert(this.uiMode)
+                })
+                .opacity(groupIndex > 1 ? 0.35 : 1)
+            }
+            Text(group.groupLabel)
+              .fontSize(19)
+              .fontWeight(900)
+              .fontColor(Theme.ink(this.uiMode))
+          }
+          .alignItems(VerticalAlign.Center)
+          Text(`${this.liveGroupItems(group, groupIndex).length} 条`)
+            .fontSize(10)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.uiMode === UiMode.JOURNAL
+              ? $r('app.color.archive_ink')
+              : Theme.sub(this.uiMode))
+            .letterSpacing(0.4)
+            .padding({
+              left: this.uiMode === UiMode.JOURNAL ? 6 : 0,
+              right: this.uiMode === UiMode.JOURNAL ? 6 : 0,
+              top: 2,
+              bottom: 2
+            })
+            .backgroundColor(this.uiMode === UiMode.JOURNAL
+              ? this.groupAccent(groupIndex)
+              : Color.Transparent)
+            .borderRadius(5)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
       .alignItems(VerticalAlign.Bottom)
-      .margin({ bottom: StyleConstants.SPACE_XS })
 
-      Column()
-        .width('100%')
-        .height(StyleConstants.RULE_MEDIUM)
-        .backgroundColor($r('app.color.text_primary'))
+      Row() {
+        Column().width(56)
+        Column()
+          .width('82%')
+          .height(1.5)
+          .backgroundColor(this.uiMode === UiMode.JOURNAL
+            ? this.groupAccent(groupIndex)
+            : Theme.rule(this.uiMode))
+        Blank()
+      }
+      .width('100%')
     }
-    .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .margin({ bottom: StyleConstants.SPACE_SM })
+    .padding({ left: 4, right: 8, top: 8, bottom: 6 })
+  }
+
+  /** 时间、正文沿同一列对齐；分隔线只在正文列，右侧留白。 */
+  @Builder
+  ScheduleEntry(item: ReminderCardData, featured: boolean, showDate: boolean) {
+    Row({ space: StyleConstants.SPACE_SM }) {
+      Column({ space: 4 }) {
+        Text(item.isLocationOnly() ? '地点' : item.timeText())
+          .fontFamily(item.isLocationOnly() ? 'sans-serif' : 'serif')
+          .fontSize(item.isLocationOnly() ? 12 : (featured ? 19 : 17))
+          .minFontSize(11)
+          .fontWeight(900)
+          .fontColor(item.isCompleted()
+            ? Theme.sub(this.uiMode)
+            : Theme.ink(this.uiMode))
+          .maxLines(1)
+          .width('100%')
+        if (showDate && item.triggerTime !== undefined) {
+          Text(this.dateLabelOf(item))
+            .fontSize(9)
+            .fontColor(Theme.sub(this.uiMode))
+            .maxLines(1)
+        }
+      }
+      .width(58)
+      .alignItems(HorizontalAlign.Start)
+
+      Column({ space: 5 }) {
+        Text(item.content)
+          .fontSize(featured ? 18 : 16)
+          .fontWeight(featured ? 900 : FontWeight.Bold)
+          .fontColor(item.isCompleted()
+            ? Theme.sub(this.uiMode)
+            : Theme.text(this.uiMode))
+          .decoration({ type: item.isCompleted() ? TextDecorationType.LineThrough : TextDecorationType.None })
+          .maxLines(featured ? 3 : 2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        if (item.hasLocation()) {
+          Text(item.locationText())
+            .fontSize(12)
+            .fontColor(Theme.sub(this.uiMode))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        if (item.isCompleted()) {
+          Text(item.statusText())
+            .fontSize(10)
+            .fontColor(Theme.sub(this.uiMode))
+        }
+      }
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
+      .padding({ left: 8, bottom: 8 })
+      .border({ width: { bottom: StyleConstants.HAIRLINE_HEIGHT }, color: Theme.rule(this.uiMode) })
+
+      Text('›')
+        .fontSize(15)
+        .fontColor(Theme.sub(this.uiMode))
+        .accessibilityLevel('no')
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ left: 4, right: 6, top: featured ? 12 : 10, bottom: 2 })
+    .onClick(() => {
+      this.goDetail(item);
+    })
   }
 
   @Builder
   GroupListBlock() {
-    Column({ space: StyleConstants.SPACE_SECTION }) {
+    Column({ space: StyleConstants.SPACE_LG }) {
       ForEach(this.groups, (group: ReminderGroupData, groupIndex: number) => {
         Column() {
           this.GroupHeader(group, groupIndex)
           ForEach(this.liveGroupItems(group, groupIndex), (item: ReminderCardData, itemIndex: number) => {
-            ReminderCard({
-              data: item,
-              role: this.roleOf(item, groupIndex, itemIndex),
-              tagTone: groupIndex * 3 + itemIndex,
-              dateLabel: this.dateLabelOf(item),
-              onCardClick: () => {
-                this.goDetail(item);
-              }
-            })
-          }, (item: ReminderCardData) => `${this.storeVersion}-${item.renderKey()}`)
+            this.ScheduleEntry(item, groupIndex === 0 && itemIndex === 0 && !item.isCompleted(), true)
+          }, (item: ReminderCardData, itemIndex: number) => `${this.storeVersion}-${item.renderKey()}-${itemIndex}`)
         }
         .width('100%')
       }, (group: ReminderGroupData) => group.groupOverline)
@@ -415,157 +498,173 @@ export struct ReminderListPage {
   }
 
   @Builder
-  PlacesBlock() {
-    Column() {
-      Row({ space: StyleConstants.SPACE_SM }) {
-        Text('PLACES')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.accent_sage'))
-          .letterSpacing(2)
-        Text('地点索引')
-          .fontSize(StyleConstants.FONT_TITLE_LG)
-          .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Bottom)
-      .margin({ bottom: StyleConstants.SPACE_XS })
-
-      Column()
-        .width('100%')
-        .height(StyleConstants.RULE_MEDIUM)
-        .backgroundColor($r('app.color.text_primary'))
-        .margin({ bottom: StyleConstants.SPACE_SM })
-
-      EmptyState({
-        title: '地点提醒（占位）',
-        subtitle: '基于位置的提醒将在这里展示，本阶段仅作视觉占位'
-      })
-    }
-    .alignItems(HorizontalAlign.Start)
-    .width('100%')
-    .margin({ top: StyleConstants.SPACE_SECTION })
-  }
-
-  @Builder
   DayCell(day: number) {
     if (day === 0) {
       Column()
         .width('14.28%')
-        .height(52)
+        .height(50)
     } else {
-      Column({ space: 4 }) {
-        Text(`${day}`)
-          .fontSize(StyleConstants.FONT_BODY_SM)
-          .fontWeight(this.selectedDay === day || this.isToday(day) ? 900 : FontWeight.Medium)
-          .fontColor(this.selectedDay === day
-            ? $r('app.color.surface_primary')
-            : (this.isToday(day) ? $r('app.color.detail_ink') : $r('app.color.text_primary')))
-        if (this.hasReminder(day)) {
-          Column()
-            .width(4)
-            .height(4)
-            .borderRadius(2)
-            .backgroundColor(this.selectedDay === day
-              ? $r('app.color.surface_primary')
-              : $r('app.color.detail_ink'))
-        } else {
-          Column()
-            .width(4)
-            .height(4)
+      Column({ space: 2 }) {
+        // 选中 = 墨蓝绿圆形底；今天 = 印章砖红；普通提醒 = 砖红小点
+        Column() {
+          Text(`${day}`)
+            .fontSize(13)
+            .fontWeight(this.selectedDay === day || this.isToday(day) ? 900 : FontWeight.Medium)
+            .fontColor(this.selectedDay === day
+              ? $r('app.color.archive_paper')
+              : (this.isToday(day) ? Theme.alert(this.uiMode) : Theme.text(this.uiMode)))
         }
+        .width(30)
+        .height(30)
+        .borderRadius(15)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor(this.selectedDay === day ? Theme.accent(this.uiMode) : Color.Transparent)
+
+        Row({ space: 3 }) {
+          if (this.isToday(day)) {
+            Column()
+              .width(10)
+              .height(3)
+              .borderRadius(2)
+              .backgroundColor(Theme.alert(this.uiMode))
+          }
+          if (this.hasReminder(day)) {
+            Column()
+              .width(4)
+              .height(4)
+              .borderRadius(2)
+              .backgroundColor(Theme.alert(this.uiMode))
+          }
+        }
+        .height(5)
+        .alignItems(VerticalAlign.Center)
       }
       .width('14.28%')
-      .height(52)
+      .height(50)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-      .backgroundColor(this.selectedDay === day ? $r('app.color.text_primary') : Color.Transparent)
       .onClick(() => {
         this.selectedDay = day;
       })
     }
   }
 
+  /**
+   * 列表页内嵌的月历：不再是一页，而是列表顶部可展开的一块。
+   * 收起时只占一行；展开后点某天就把下面的列表筛成那一天。
+   */
   @Builder
   CalendarBlock() {
-    Column({ space: StyleConstants.SPACE_MD }) {
-      Row() {
+    Column({ space: StyleConstants.SPACE_XS }) {
+      Row({ space: 2 }) {
+        Text('日历')
+          .fontSize(StyleConstants.FONT_SECTION_INDEX)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.sub(this.uiMode))
+          .letterSpacing(1)
+        Blank()
+        if (this.selectedDay !== 0) {
+          Text('全部')
+            .fontSize(10)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.ink(this.uiMode))
+            .height(28)
+            .padding({ left: 6, right: 6 })
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              this.selectedDay = 0;
+            })
+        }
         Text('‹')
-          .fontSize(22)
+          .fontSize(18)
           .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
-          .width(StyleConstants.TOUCH_TARGET_MIN)
-          .height(StyleConstants.TOUCH_TARGET_MIN)
+          .fontColor(Theme.ink(this.uiMode))
+          .width(28)
+          .height(28)
           .textAlign(TextAlign.Center)
           .onClick(() => {
             this.shiftMonth(-1);
+            this.calExpanded = true;
           })
-        Blank()
-        Column({ space: 2 }) {
-          Text(`${this.calYear} / ${this.calMonth}`)
-            .fontSize(StyleConstants.FONT_TITLE)
-            .fontWeight(900)
-            .fontColor($r('app.color.text_primary'))
-          Text('MONTH')
-            .fontSize(StyleConstants.FONT_SECTION_INDEX)
-            .fontColor($r('app.color.text_secondary'))
-            .letterSpacing(2)
-        }
-        .alignItems(HorizontalAlign.Center)
-        Blank()
-        Text('›')
-          .fontSize(22)
+        Text(`${this.calYear} / ${this.calMonth}`)
+          .fontSize(13)
           .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
-          .width(StyleConstants.TOUCH_TARGET_MIN)
-          .height(StyleConstants.TOUCH_TARGET_MIN)
+          .fontColor(Theme.ink(this.uiMode))
+          .width(80)
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.calExpanded = !this.calExpanded;
+          })
+        Text('›')
+          .fontSize(18)
+          .fontWeight(900)
+          .fontColor(Theme.ink(this.uiMode))
+          .width(28)
+          .height(28)
           .textAlign(TextAlign.Center)
           .onClick(() => {
             this.shiftMonth(1);
+            this.calExpanded = true;
+          })
+        Text(this.calExpanded ? '收起' : '展开')
+          .fontSize(10)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.accent(this.uiMode))
+          .height(28)
+          .padding({ left: 6, right: 6 })
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.calExpanded = !this.calExpanded;
           })
       }
       .width('100%')
+      .height(32)
       .alignItems(VerticalAlign.Center)
 
-      Row() {
-        ForEach(['日', '一', '二', '三', '四', '五', '六'], (w: string) => {
-          Text(w)
-            .fontSize(StyleConstants.FONT_SECTION_INDEX)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_secondary'))
-            .width('14.28%')
-            .textAlign(TextAlign.Center)
-        }, (w: string) => `week-${w}`)
-      }
-      .width('100%')
+      if (this.calExpanded) {
+        Row() {
+          ForEach(['日', '一', '二', '三', '四', '五', '六'], (w: string) => {
+            Text(w)
+              .fontSize(9)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Theme.sub(this.uiMode))
+              .width('14.28%')
+              .textAlign(TextAlign.Center)
+          }, (w: string) => `week-${w}`)
+        }
+        .width('100%')
+        .padding({ bottom: 2 })
+        .border({
+          width: { bottom: StyleConstants.HAIRLINE_HEIGHT },
+          color: Theme.rule(this.uiMode)
+        })
 
-      Column() {
-        ForEach(this.calendarRows(), (row: number[], ri: number) => {
-          Row() {
-            ForEach(row, (day: number, ci: number) => {
-              this.DayCell(day)
-            }, (day: number, ci: number) => `${ri}-${ci}-${day}`)
-          }
-          .width('100%')
-        }, (row: number[], ri: number) => `row-${ri}`)
-      }
-      .width('100%')
+        Column() {
+          ForEach(this.calendarRows(), (row: number[], ri: number) => {
+            Row() {
+              ForEach(row, (day: number, ci: number) => {
+                this.DayCell(day)
+              }, (day: number, ci: number) => `${ri}-${ci}-${day}`)
+            }
+            .width('100%')
+          }, (row: number[], ri: number) => `row-${ri}`)
+        }
+        .width('100%')
 
-      Text('有提醒的日期带一个红点；无固定时间的提醒不进入日历')
-        .fontSize(StyleConstants.FONT_SECTION_INDEX)
-        .fontColor($r('app.color.text_secondary'))
-        .opacity(0.8)
+        Text('有提醒的日期带一个点；点某天只看那天的安排')
+          .fontSize(9)
+          .fontColor(Theme.sub(this.uiMode))
+          .opacity(0.8)
+      }
     }
     .width('100%')
-    .padding(StyleConstants.SPACE_MD)
-    .backgroundColor($r('app.color.surface_primary'))
-    .borderRadius({
-      topLeft: 0,
-      topRight: 18,
-      bottomLeft: 0,
-      bottomRight: 0
+    .padding({ top: StyleConstants.SPACE_XS, bottom: StyleConstants.SPACE_SM })
+    .border({
+      width: { bottom: StyleConstants.HAIRLINE_HEIGHT },
+      color: Theme.rule(this.uiMode)
     })
+    .margin({ bottom: StyleConstants.SPACE_SM })
   }
 
   @Builder
@@ -575,7 +674,7 @@ export struct ReminderListPage {
         Text('选择一个日期')
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(Theme.text(this.uiMode))
           .letterSpacing(1)
       } else {
         // 日期头条：巨大的日数 + 年月与星期
@@ -583,16 +682,16 @@ export struct ReminderListPage {
           Text(`${this.selectedDay}`)
             .fontSize(64)
             .fontWeight(900)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(Theme.text(this.uiMode))
           Column({ space: 2 }) {
             Text(`${this.calYear} / ${this.calMonth}`)
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
+              .fontColor(Theme.text(this.uiMode))
               .letterSpacing(1)
             Text(this.weekdayOf(this.selectedDay))
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(Theme.sub(this.uiMode))
               .letterSpacing(1)
           }
           .alignItems(HorizontalAlign.Start)
@@ -604,7 +703,7 @@ export struct ReminderListPage {
           Text(`${this.itemsOnDate(this.selectedDay).length} 条`)
             .fontSize(StyleConstants.FONT_SECTION_INDEX)
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(Theme.sub(this.uiMode))
         }
         .width('100%')
         .alignItems(VerticalAlign.Bottom)
@@ -612,29 +711,23 @@ export struct ReminderListPage {
         Column()
           .width('100%')
           .height(StyleConstants.RULE_HEAVY)
-          .backgroundColor($r('app.color.text_primary'))
+          .backgroundColor(Theme.text(this.uiMode))
 
         if (this.itemsOnDate(this.selectedDay).length === 0) {
           Text('这一天没有提醒')
             .fontSize(StyleConstants.FONT_BODY_SM)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(Theme.sub(this.uiMode))
             .padding({
               top: StyleConstants.SPACE_MD,
               bottom: StyleConstants.SPACE_MD
             })
         } else {
-          ForEach(this.itemsOnDate(this.selectedDay), (item: ReminderCardData, index: number) => {
-            ReminderCard({
-              data: item,
-              role: this.dayRole(item, index),
-              indexLabel: index === 0 ? 'No. 01' : '',
-              entryNo: index < 9 ? `0${index + 1}` : `${index + 1}`,
-              tagTone: index,
-              onCardClick: () => {
-                this.goDetail(item);
-              }
-            })
-          }, (item: ReminderCardData) => `${this.storeVersion}-${item.renderKey()}`)
+          Column() {
+            ForEach(this.itemsOnDate(this.selectedDay), (item: ReminderCardData, index: number) => {
+              this.ScheduleEntry(item, index === 0 && !item.isCompleted(), false)
+            }, (item: ReminderCardData, index: number) => `${this.storeVersion}-${item.renderKey()}-${index}`)
+          }
+          .width('100%')
         }
       }
     }

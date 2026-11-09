@@ -1,4 +1,6 @@
 import { StyleConstants } from '../common/StyleConstants';
+import { UiMode } from '../common/UiMode';
+import { Theme } from '../common/Theme';
 
 /**
  * 页面顶部栏：返回键 + 标题 + 右侧文字操作区。
@@ -6,11 +8,13 @@ import { StyleConstants } from '../common/StyleConstants';
  */
 @Component
 export struct TopBar {
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
   title: string = '';
   showBack: boolean = false;
   onBack: () => void = () => {};
   actionLabel: string = '';
   onAction: () => void = () => {};
+  onDark: boolean = false;
 
   build() {
     Row({ space: StyleConstants.SPACE_MD }) {
@@ -18,7 +22,7 @@ export struct TopBar {
         Text('←')
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(this.onDark ? $r('app.color.archive_paper') : Theme.text(this.uiMode))
           .width(StyleConstants.TOUCH_TARGET_MIN)
           .height(StyleConstants.TOUCH_TARGET_MIN)
           .textAlign(TextAlign.Center)
@@ -27,13 +31,13 @@ export struct TopBar {
       Text(this.title)
         .fontSize(StyleConstants.FONT_BODY)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(this.onDark ? $r('app.color.archive_paper') : Theme.text(this.uiMode))
         .layoutWeight(1)
       if (this.actionLabel !== '') {
         Text(this.actionLabel)
           .fontSize(StyleConstants.FONT_BODY_SM)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.brand_primary'))
+          .fontColor(this.onDark ? $r('app.color.archive_accent') : Theme.ink(this.uiMode))
           .height(StyleConstants.TOUCH_TARGET_MIN)
           .onClick(() => this.onAction())
       }

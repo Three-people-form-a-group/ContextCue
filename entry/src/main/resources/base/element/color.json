@@ -2,67 +2,67 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#B9D5DC"
+      "value": "#F0F2F2"
     },
     {
       "name": "background_primary",
-      "value": "#B9D5DC"
+      "value": "#F0F2F2"
     },
     {
       "name": "background_secondary",
-      "value": "#8FA5AE"
+      "value": "#E3E7E8"
     },
     {
       "name": "surface_primary",
-      "value": "#FAF7EC"
+      "value": "#FFF9F0"
     },
     {
       "name": "surface_secondary",
-      "value": "#EADDBE"
+      "value": "#E3E7E8"
     },
     {
       "name": "text_primary",
-      "value": "#30343A"
+      "value": "#263C61"
     },
     {
       "name": "text_secondary",
-      "value": "#4E5C64"
+      "value": "#4E5F6E"
     },
     {
       "name": "brand_primary",
-      "value": "#667681"
+      "value": "#263C61"
     },
     {
       "name": "accent_primary",
-      "value": "#F5B66F"
+      "value": "#E86E54"
     },
     {
       "name": "accent_secondary",
-      "value": "#A58A60"
+      "value": "#D4DADC"
     },
     {
       "name": "accent_vermilion",
-      "value": "#C0392B"
+      "value": "#E86E54"
     },
     {
       "name": "accent_sage",
-      "value": "#78866B"
+      "value": "#8FB7B0"
     },
     {
       "name": "accent_burgundy",
-      "value": "#7A2E2E"
+      "value": "#8E5FA8"
     },
     {
       "name": "accent_olive",
-      "value": "#5E5B3A"
+      "value": "#5C7A86"
     },
     {
       "name": "accent_terracotta",
-      "value": "#8C4A32"
+      "value": "#7E5E8E"
     },
     {
       "name": "detail_ink",
-      "value": "#703434"
+      "value": "#263C61"
     },
     {
       "name": "detail_note",
@@ -73,8 +73,132 @@
       "value": "#364252"
     },
     {
+      "name": "course_tint_1",
+      "value": "#DFE6E6"
+    },
+    {
+      "name": "course_edge_1",
+      "value": "#38545F"
+    },
+    {
+      "name": "course_tint_2",
+      "value": "#E9DAD1"
+    },
+    {
+      "name": "course_edge_2",
+      "value": "#71473D"
+    },
+    {
+      "name": "course_tint_3",
+      "value": "#EBE2D2"
+    },
+    {
+      "name": "course_edge_3",
+      "value": "#675641"
+    },
+    {
+      "name": "course_tint_4",
+      "value": "#DFE4D8"
+    },
+    {
+      "name": "course_edge_4",
+      "value": "#455541"
+    },
+    {
+      "name": "course_tint_5",
+      "value": "#DCE2EB"
+    },
+    {
+      "name": "course_edge_5",
+      "value": "#495575"
+    },
+    {
+      "name": "accent_clay",
+      "value": "#A65347"
+    },
+    {
       "name": "border_subtle",
-      "value": "#C4B394"
+      "value": "#D4DADC"
+    },
+    {
+      "name": "retro_blue",
+      "value": "#526B83"
+    },
+    {
+      "name": "retro_teal",
+      "value": "#3F5F5C"
+    },
+    {
+      "name": "retro_rust",
+      "value": "#8E5A45"
+    },
+    {
+      "name": "course_tint_6",
+      "value": "#D7E5DF"
+    },
+    {
+      "name": "course_edge_6",
+      "value": "#2F5952"
+    },
+    {
+      "name": "archive_canvas",
+      "value": "#F0F2F2"
+    },
+    {
+      "name": "archive_ink",
+      "value": "#263C61"
+    },
+    {
+      "name": "archive_paper",
+      "value": "#FFF9F0"
+    },
+    {
+      "name": "archive_rule",
+      "value": "#BEC7CA"
+    },
+    {
+      "name": "archive_accent",
+      "value": "#E86E54"
+    },
+    {
+      "name": "accent_coral",
+      "value": "#F58B55"
+    },
+    {
+      "name": "accent_mustard",
+      "value": "#E8C45B"
+    },
+    {
+      "name": "accent_mint",
+      "value": "#8FB7B0"
+    },
+    {
+      "name": "accent_sky",
+      "value": "#D9A3B0"
+    },
+    {
+      "name": "ink_on_paper",
+      "value": "#263C61"
+    },
+    {
+      "name": "accent_light_a",
+      "value": "#FFF3E9"
+    },
+    {
+      "name": "accent_light_b",
+      "value": "#E8C45B"
+    },
+    {
+      "name": "paper_coral",
+      "value": "#FBE2D8"
+    },
+    {
+      "name": "paper_salt",
+      "value": "#D8E7E3"
+    },
+    {
+      "name": "paper_amber",
+      "value": "#F6E7C4"
     }
   ]
 }

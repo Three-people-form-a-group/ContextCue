@@ -1,4 +1,6 @@
 import { StyleConstants } from '../common/StyleConstants';
+import { UiMode } from '../common/UiMode';
+import { Theme } from '../common/Theme';
 import { TopBar } from '../components/TopBar';
 
 /**
@@ -14,6 +16,7 @@ struct SettingToggleRow {
   @Prop desc: string = '';
   @Prop initialOn: boolean = false;
   @State isOn: boolean = false;
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
 
   aboutToAppear(): void {
     this.isOn = this.initialOn;
@@ -30,7 +33,7 @@ struct SettingToggleRow {
         if (this.desc !== '') {
           Text(this.desc)
             .fontSize(StyleConstants.FONT_SECTION_INDEX)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(Theme.sub(this.uiMode))
             .maxLines(2)
         }
       }
@@ -53,6 +56,7 @@ struct SettingToggleRow {
 
 @Component
 struct SettingValueRow {
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
   @Prop label: string = '';
   @Prop value: string = '';
   @Prop desc: string = '';
@@ -68,7 +72,7 @@ struct SettingValueRow {
         if (this.desc !== '') {
           Text(this.desc)
             .fontSize(StyleConstants.FONT_SECTION_INDEX)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(Theme.sub(this.uiMode))
             .maxLines(2)
         }
       }
@@ -93,12 +97,15 @@ struct SettingValueRow {
 @Component
 export struct SettingsPage {
   pathStack: NavPathStack = new NavPathStack();
+  /** 作为底部 Tab 使用时隐藏返回按钮 */
+  @Prop showBack: boolean = true;
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
 
   build() {
     Column() {
       TopBar({
-        title: '出版说明',
-        showBack: true,
+        title: '设置',
+        showBack: this.showBack,
         onBack: () => {
           this.pathStack.pop();
         }
@@ -106,6 +113,7 @@ export struct SettingsPage {
       Scroll() {
         Column() {
           this.MastheadBlock()
+          this.ModeSection()
           this.ReminderSection()
           this.ContextSection()
           this.AiSection()
@@ -126,55 +134,89 @@ export struct SettingsPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.background_primary'))
+    .backgroundColor(Theme.bg(this.uiMode))
+  }
+
+  /** 界面模式：极简 / 手账 */
+  @Builder
+  ModeSection() {
+    Column({ space: 8 }) {
+      Row() {
+        Text('界面模式')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.text(this.uiMode))
+        Blank()
+        Text(this.uiMode === UiMode.MINIMAL ? '极简' : '手账')
+          .fontSize(11)
+          .fontColor(Theme.sub(this.uiMode))
+      }
+      .width('100%')
+
+      Row({ space: 8 }) {
+        this.ModeOption('极简', UiMode.MINIMAL, '冷灰白 · 无装饰')
+        this.ModeOption('手账', UiMode.JOURNAL, '拼贴 · 纸张 · 胶带')
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .margin({ top: StyleConstants.SPACE_SECTION })
+  }
+
+  @Builder
+  ModeOption(label: string, mode: string, desc: string) {
+    Column({ space: 4 }) {
+      Text(label)
+        .fontSize(15)
+        .fontWeight(900)
+        .fontColor(this.uiMode === mode ? Theme.bg(this.uiMode) : Theme.text(this.uiMode))
+      Text(desc)
+        .fontSize(9)
+        .fontColor(this.uiMode === mode ? Theme.bg(this.uiMode) : Theme.sub(this.uiMode))
+        .opacity(this.uiMode === mode ? 0.85 : 1)
+    }
+    .layoutWeight(1)
+    .alignItems(HorizontalAlign.Start)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .backgroundColor(this.uiMode === mode ? Theme.text(this.uiMode) : Theme.surface(this.uiMode))
+    .borderRadius({
+      topLeft: 0,
+      topRight: 10,
+      bottomLeft: 0,
+      bottomRight: 10
+    })
+    .border({
+      width: this.uiMode === mode ? 0 : 1,
+      color: Theme.rule(this.uiMode)
+    })
+    .onClick(() => {
+      UiMode.setMode(getContext(this), mode);
+    })
   }
 
   @Builder
   MastheadBlock() {
-    Column() {
-      Row() {
-        Text('COLOPHON')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .letterSpacing(2)
+    Column({ space: 6 }) {
+      Row({ space: 10 }) {
+        Column()
+          .width(8)
+          .height(30)
+          .backgroundColor(this.uiMode === UiMode.JOURNAL
+            ? $r('app.color.accent_mint')
+            : Theme.text(this.uiMode))
+        Text('设置')
+          .fontSize(30)
+          .fontWeight(900)
+          .fontColor(Theme.text(this.uiMode))
         Blank()
-        Text('ISSUE 017')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
-          .letterSpacing(2)
       }
       .width('100%')
-      .height(20)
       .alignItems(VerticalAlign.Center)
 
       Column()
         .width('100%')
         .height(StyleConstants.RULE_HEAVY)
-        .backgroundColor($r('app.color.text_primary'))
-
-      Row() {
-        Text('出版说明')
-          .fontSize(StyleConstants.FONT_DISPLAY)
-          .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
-        Blank()
-        Column()
-          .width(36)
-          .height(4)
-          .backgroundColor($r('app.color.accent_vermilion'))
-          .margin({ top: StyleConstants.SPACE_XL })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Bottom)
-      .margin({ top: StyleConstants.SPACE_SM })
-
-      Text('ContextCue · 时间公报')
-        .fontSize(StyleConstants.FONT_SECTION_INDEX)
-        .fontColor($r('app.color.text_secondary'))
-        .letterSpacing(1)
-        .margin({ top: StyleConstants.SPACE_XS })
+        .backgroundColor(Theme.text(this.uiMode))
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
@@ -188,7 +230,7 @@ export struct SettingsPage {
         .fontSize(StyleConstants.FONT_DISPLAY)
         .fontWeight(900)
         .fontColor($r('app.color.text_primary'))
-        .opacity(0.16)
+        .opacity(0.18)
         .width(48)
       Column({ space: StyleConstants.SPACE_XS }) {
         Text(title)
@@ -292,12 +334,6 @@ export struct SettingsPage {
           desc: '当前为 UI 骨架阶段',
           value: '0.1.0'
         })
-        this.Rule()
-        SettingValueRow({
-          label: '设计语言',
-          desc: '复古报纸 × 实验性编辑设计',
-          value: 'Temporal Gazette'
-        })
       }
       .width('100%')
       .padding({ left: 60 })
@@ -314,12 +350,7 @@ export struct SettingsPage {
         .backgroundColor($r('app.color.text_primary'))
         .margin({ bottom: StyleConstants.SPACE_MD })
 
-      Text('CONTEXTCUE · THE DAILY GAZETTE')
-        .fontSize(StyleConstants.FONT_SECTION_INDEX)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_secondary'))
-        .letterSpacing(2)
-      Text('由水獭编辑员整理 · 占位页面，暂无持久化设置')
+      Text('占位页面 · 暂无持久化设置')
         .fontSize(StyleConstants.FONT_SECTION_INDEX)
         .fontColor($r('app.color.text_secondary'))
         .opacity(0.8)

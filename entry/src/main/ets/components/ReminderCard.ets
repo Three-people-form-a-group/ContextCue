@@ -1,4 +1,6 @@
 import { StyleConstants } from '../common/StyleConstants';
+import { UiMode } from '../common/UiMode';
+import { Theme } from '../common/Theme';
 import { UiReminderStatus, UiTriggerType, UiReminderSource, UiLocationTriggerMode } from '../common/UiReminderSemantics';
 
 function formatClockText(epochMs: number | undefined): string {
@@ -131,10 +133,9 @@ export class ReminderCardVariant {
 
 /**
  * 拼贴版面角色 —— 布局角色，与业务枚举的颜色分配无关。
- *   LEAD      头版：炭黑块、56fp 时间、右侧出血
+ *   LEAD      头条：浅纸、刊线、大号时间
  *   EDITORIAL 无纸面：时间挂在左侧栅格，栏线有意中断
- *   FIELD     情境：鼠尾草色块 + 奶油纸片上下叠压
- *   SLIP      窄纸条：时间与地点两级，带底纸与切角
+ *   FIELD     情境：地名边栏 + 开放式正文
  *   ARCHIVE   封存：无纸面，朱红标记 + 降权文字
  */
 export class SlipRole {
@@ -152,27 +153,15 @@ export struct ReminderCard {
   isNext: boolean = false;
   indexLabel: string = '';
   entryNo: string = '';
-  tagTone: number = 0;
   dateLabel: string = '';
   onCardClick: () => void = () => {};
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
 
   private resolvedRole(): string {
     if (this.role !== '') {
       return this.role;
     }
     return this.variant === ReminderCardVariant.COMPACT ? SlipRole.EDITORIAL : SlipRole.LEAD;
-  }
-
-  /** 复古套色轮换：按行变化，而不是按业务类型堆同一个红色 */
-  private tagColor(): Resource {
-    const tones: Resource[] = [
-      $r('app.color.accent_vermilion'),
-      $r('app.color.brand_primary'),
-      $r('app.color.accent_burgundy'),
-      $r('app.color.accent_olive'),
-      $r('app.color.accent_terracotta')
-    ];
-    return tones[this.tagTone % tones.length];
   }
 
   build() {
@@ -187,100 +176,89 @@ export struct ReminderCard {
     }
   }
 
-  // ---------- 1. Lead Story：炭黑头版，右侧出血 ----------
-
+  /** 首条事项用整张裁边剪报承载，编号、时间和正文共享同一栏线。 */
   @Builder
   LeadStory() {
-    Column({ space: StyleConstants.SPACE_SM }) {
+    Column({ space: 9 }) {
       Row({ space: StyleConstants.SPACE_SM }) {
-        // 朱红套印标记（色块，不承载小字）
-        Column()
-          .width(3)
-          .height(18)
-          .backgroundColor($r('app.color.accent_vermilion'))
         Text(this.indexLabel)
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.surface_primary'))
-          .opacity(0.65)
-          .letterSpacing(2)
-        Blank()
+          .fontSize(11)
+          .fontWeight(900)
+          .fontColor($r('app.color.ink_on_paper'))
+          .letterSpacing(0.8)
         if (this.dateLabel !== '') {
           Text(this.dateLabel)
-            .fontSize(StyleConstants.FONT_SECTION_INDEX)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.surface_primary'))
-            .opacity(0.65)
-            .letterSpacing(1)
+            .fontSize(11)
+            .fontColor($r('app.color.ink_on_paper'))
         }
       }
       .width('100%')
-      .alignItems(VerticalAlign.Center)
+      .padding({ bottom: 6 })
+      .border({ width: { bottom: 1 }, color: Theme.rule(this.uiMode) })
 
-      Text(this.data.primaryText())
-        .fontSize(this.data.isLocationOnly()
-          ? StyleConstants.FONT_TITLE_LG
-          : StyleConstants.FONT_HEADLINE_TIME)
-        .fontWeight(900)
-        .fontColor($r('app.color.surface_primary'))
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
+      Row({ space: 10 }) {
+        Text(this.data.primaryText())
+          .fontSize(this.data.isLocationOnly() ? 19 : 32)
+          .minFontSize(16)
+          .fontFamily(this.data.isLocationOnly() ? 'sans-serif' : 'serif')
+          .fontWeight(900)
+          .fontColor(Theme.accent(this.uiMode))
+          .width(85)
+          .maxLines(this.data.isLocationOnly() ? 2 : 1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-      Text(this.data.content)
-        .fontSize(StyleConstants.FONT_TITLE)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.surface_primary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-
-      if (this.data.isDualFocus()) {
-        Row({ space: StyleConstants.SPACE_SM }) {
-          Column()
-            .width(8)
-            .height(8)
-            .backgroundColor($r('app.color.accent_sage'))
-          Text(this.data.locationText())
-            .fontSize(StyleConstants.FONT_BODY_SM)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.surface_primary'))
-            .opacity(0.82)
-            .maxLines(1)
+        Column({ space: 5 }) {
+          Text(this.data.content)
+            .fontSize(21)
+            .fontWeight(900)
+            .fontColor($r('app.color.ink_on_paper'))
+            .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
+            .width('100%')
+          if (this.data.isDualFocus()) {
+            Text(this.data.locationText())
+              .fontSize(12)
+              .fontColor($r('app.color.ink_on_paper'))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .padding({ left: 10 })
+        .border({ width: { left: 1 }, color: Theme.rule(this.uiMode) })
       }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .padding(StyleConstants.SPACE_LG)
-    .backgroundColor($r('app.color.text_primary'))
-    // 视觉上向右出血到屏幕边缘（offset 不改布局，不会撑破滚动区）
-    .offset({ x: StyleConstants.PAGE_PADDING_H })
+    .padding({ left: 13, right: 13, top: 15, bottom: 20 })
+    .backgroundColor($r('app.color.archive_paper'))
+    .backgroundImage($r('app.media.torn_note_cream'))
+    .backgroundImageSize({ width: '100%', height: '100%' })
+    .border({ width: { left: 4 }, color: $r('app.color.accent_coral') })
     .onClick(() => this.onCardClick())
   }
 
-  // ---------- 2. Editorial Brief：窄长色标 + 大号时间 + 开放式正文 ----------
+  // ---------- 2. Editorial Brief：印刷编号 + 大号时间 + 开放式正文 ----------
 
   @Builder
   EditorialRow() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      // 窄长色标：编号压在上面，颜色按情境区分（时间=朱红 / 时间+地点=鼠尾草）
+      // 编号是页边索引，给时间和正文让出视觉重量。
       Column() {
         Text(this.entryNo)
           .fontSize(StyleConstants.FONT_BODY_SM)
           .fontWeight(900)
-          .fontColor($r('app.color.surface_primary'))
+          .fontColor(Theme.ink(this.uiMode))
           .letterSpacing(1)
       }
       .width(26)
-      .height(56)
+      .height(44)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-      .backgroundColor(this.tagColor())
+      .border({ width: { bottom: 1 }, color: $r('app.color.accent_sky') })
 
       Column({ space: StyleConstants.SPACE_XS }) {
         Row({ space: StyleConstants.SPACE_SM }) {
@@ -289,19 +267,19 @@ export struct ReminderCard {
             .minFontSize(34)
             .maxFontSize(StyleConstants.FONT_EDITORIAL_TIME + 14)
             .fontWeight(900)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(Theme.text(this.uiMode))
             .letterSpacing(-1)
             .maxLines(1)
           Column()
             .width(StyleConstants.SPACE_XL)
             .height(StyleConstants.RULE_HEAVY)
-            .backgroundColor($r('app.color.text_primary'))
+            .backgroundColor(Theme.text(this.uiMode))
           Blank()
           if (this.dateLabel !== '') {
             Text(this.dateLabel)
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_secondary'))
+              .fontColor(Theme.sub(this.uiMode))
               .letterSpacing(1)
               .maxLines(1)
           }
@@ -312,7 +290,7 @@ export struct ReminderCard {
         Text(this.data.content)
           .fontSize(StyleConstants.FONT_TITLE + 4)
           .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(Theme.text(this.uiMode))
           .lineHeight(32)
           .maxLines(4)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -327,7 +305,7 @@ export struct ReminderCard {
             Text(this.data.locationText())
               .fontSize(StyleConstants.FONT_BODY_SM)
               .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
+              .fontColor(Theme.text(this.uiMode))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
@@ -339,7 +317,7 @@ export struct ReminderCard {
         Column()
           .width(StyleConstants.RULE_SHORT_WIDTH)
           .height(StyleConstants.RULE_MEDIUM)
-          .backgroundColor($r('app.color.text_primary'))
+          .backgroundColor(Theme.text(this.uiMode))
           .margin({ top: StyleConstants.SPACE_XS })
       }
       .layoutWeight(1)
@@ -356,46 +334,39 @@ export struct ReminderCard {
     .onClick(() => this.onCardClick())
   }
 
-  // ---------- 3. Field Note：情境色块 + 开放式正文（无纸面容器） ----------
+  // ---------- 3. Field Note：索引栏 + 开放式正文 ----------
 
   @Builder
   FieldNote() {
     Row({ space: StyleConstants.SPACE_LG }) {
-      // 真实的情境色域：只放地名，文字足够大以保证对比度
+      // 地名和触发条件排成边栏。
       Column({ space: StyleConstants.SPACE_XS }) {
         Text(this.data.primaryText())
           .fontSize(StyleConstants.FONT_FIELD_NAME)
           .fontWeight(900)
-          .fontColor($r('app.color.surface_primary'))
+          .fontColor(Theme.ink(this.uiMode))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
       }
-      .width('44%')
+      .width('34%')
       .alignItems(HorizontalAlign.Start)
-      .padding(StyleConstants.SPACE_MD)
-      .backgroundColor($r('app.color.accent_sage'))
-      // 圆角必须远小于色块高度，否则上下圆弧会在边缘重叠，滚动时出现折角伪影
-      .borderRadius({
-        topLeft: 0,
-        topRight: 10,
-        bottomLeft: 0,
-        bottomRight: 3
-      })
+      .padding({ right: StyleConstants.SPACE_SM })
+      .border({ width: { right: 1 }, color: Theme.rule(this.uiMode) })
 
       // 正文直接排在编辑底色上，不再套第二层纸
       Column({ space: StyleConstants.SPACE_XS }) {
         Text(this.data.content)
           .fontSize(StyleConstants.FONT_BODY)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(Theme.text(this.uiMode))
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
         Text(this.data.locationModeText())
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(Theme.sub(this.uiMode))
           .letterSpacing(1)
       }
       .layoutWeight(1)
@@ -422,17 +393,11 @@ export struct ReminderCard {
           Column()
             .width(4)
             .height(4)
-            .backgroundColor($r('app.color.accent_vermilion'))
-          Text('SEALED')
-            .fontSize(StyleConstants.FONT_SECTION_INDEX)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_secondary'))
-            .letterSpacing(2)
-          Blank()
+            .backgroundColor(Theme.rule(this.uiMode))
           Text('已完成')
             .fontSize(StyleConstants.FONT_SECTION_INDEX)
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(Theme.sub(this.uiMode))
             .letterSpacing(1)
         }
         .width('100%')
@@ -441,14 +406,14 @@ export struct ReminderCard {
         Text(this.data.primaryText())
           .fontSize(StyleConstants.FONT_TITLE_LG)
           .fontWeight(900)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(Theme.sub(this.uiMode))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Text(this.data.content)
           .fontSize(StyleConstants.FONT_BODY_SM)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(Theme.sub(this.uiMode))
           .decoration({ type: TextDecorationType.LineThrough })
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -457,7 +422,7 @@ export struct ReminderCard {
         Column()
           .width(StyleConstants.RULE_SHORT_WIDTH)
           .height(StyleConstants.HAIRLINE_HEIGHT)
-          .backgroundColor($r('app.color.border_subtle'))
+          .backgroundColor(Theme.rule(this.uiMode))
           .margin({ top: StyleConstants.SPACE_XS })
       }
       .layoutWeight(1)

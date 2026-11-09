@@ -3,8 +3,9 @@ import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '.
 import { UiReminderStore } from '../common/UiReminderStore';
 import { ReminderCardData, ReminderCard, SlipRole } from './ReminderCard';
 import { OtterSlot, OtterState } from './OtterSlot';
-import { SettingsGear } from './SettingsGear';
 import { EmptyState } from './EmptyState';
+import { UiMode } from '../common/UiMode';
+import { Theme } from '../common/Theme';
 
 const VIEW_ARCHIVE: string = 'archive';
 const VIEW_TIMELINE: string = 'timeline';
@@ -25,7 +26,7 @@ function gapHeightVp(prev: ReminderCardData, cur: ReminderCardData): number {
   return Math.min(StyleConstants.GAP_MAX, Math.max(StyleConstants.GAP_MIN, raw));
 }
 
-/** 时间差批注：+45 MIN / +6 H / +4 H 30 M；无法计算时返回空串。 */
+/** 时间差批注：＋45 分钟 / ＋6 小时 / ＋4 小时 30 分钟；无法计算时返回空串。 */
 function formatGap(prev: ReminderCardData, cur: ReminderCardData): string {
   if (prev.triggerTime === undefined || cur.triggerTime === undefined) {
     return '';
@@ -36,11 +37,11 @@ function formatGap(prev: ReminderCardData, cur: ReminderCardData): string {
   }
   const total: number = Math.round(minutes);
   if (total < 60) {
-    return `+${total} MIN`;
+    return `＋${total} 分钟`;
   }
   const hours: number = Math.floor(total / 60);
   const rest: number = total % 60;
-  return rest === 0 ? `+${hours} H` : `+${hours} H ${rest} M`;
+  return rest === 0 ? `＋${hours} 小时` : `＋${hours} 小时 ${rest} 分钟`;
 }
 
 /**
@@ -52,9 +53,6 @@ function resolveSlipRole(item: ReminderCardData, index: number): string {
   if (item.isCompleted()) {
     return SlipRole.ARCHIVE;
   }
-  if (index === 0) {
-    return SlipRole.LEAD;
-  }
   // 只有「纯地点提醒」才进入 FIELD 版式；
   // 时间+地点（BOTH）必须以时间为主信息，否则会看起来像纯地点提醒。
   if (item.isLocationOnly() && index % 2 === 0) {
@@ -64,15 +62,7 @@ function resolveSlipRole(item: ReminderCardData, index: number): string {
   return SlipRole.EDITORIAL;
 }
 
-/**
- * 今日页面 —— ContextCue · Temporal Gazette 头版。
- *
- * 报头：小号英文刊名 + 期号 + 粗细分隔线 + 日期 + 巨型「今日」+ 水獭编辑员。
- * 正文：时间装订线 + 报纸版面（头版重点 / 栏目 / 情境标记 / 无版面），
- *       相邻间距由真实时间差压缩得出。
- * 已完成事项移入 SEALED RECORDS 归档版面。
- * 右上角齿轮进入设置页；统计行右侧可切换档案 / 时间轴两种视图。
- */
+/** 今日页由日期、待办列表与完成归档组成。时间轴复用同一份提醒。 */
 @Component
 export struct TodayDashboard {
   pathStack: NavPathStack = new NavPathStack();
@@ -81,6 +71,7 @@ export struct TodayDashboard {
   @State viewMode: string = VIEW_ARCHIVE;
   // 版本号变化 → 重渲染 → 通过方法读取最新数据
   @StorageLink('uiReminderVersion') storeVersion: number = 0;
+  @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
 
   /** 首页按真实时间排序：修改时间后条目位置会随之改变。 */
   private activeItems(): ReminderCardData[] {
@@ -111,11 +102,6 @@ export struct TodayDashboard {
   private noShort(index: number): string {
     const n: number = index + 1;
     return n < 10 ? `0${n}` : `${n}`;
-  }
-
-  private noLabel(index: number): string {
-    const n: number = index + 1;
-    return n < 10 ? `No. 0${n}` : `No. ${n}`;
   }
 
   private allItems(): ReminderCardData[] {
@@ -176,12 +162,13 @@ export struct TodayDashboard {
     .scrollBar(BarState.Off)
     .width('100%')
     .height('100%')
+    .backgroundColor(Theme.bg(this.uiMode))
   }
 
   @Builder
   ViewToggle() {
     Row({ space: StyleConstants.SPACE_XS }) {
-      Text(this.viewMode === VIEW_ARCHIVE ? '时间轴' : '版面')
+      Text(this.viewMode === VIEW_ARCHIVE ? '时间轴' : '列表')
         .fontSize(StyleConstants.FONT_CAPTION)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
@@ -190,7 +177,7 @@ export struct TodayDashboard {
       Text(this.viewMode === VIEW_ARCHIVE ? '→' : '←')
         .fontSize(StyleConstants.FONT_CAPTION)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.accent_vermilion'))
+        .fontColor($r('app.color.text_secondary'))
     }
     .height(StyleConstants.TOUCH_TARGET_MIN)
     .padding({
@@ -203,182 +190,160 @@ export struct TodayDashboard {
     })
   }
 
-  /**
-   * 报纸报头：英文刊名、期号、粗细线、日期、巨型中文标题、水獭编辑员。
-   * 绘制顺序：奶油纸块 → 水獭 → 文字，文字永远在最上层。
-   */
   @Builder
   MastheadBlock() {
     Column() {
-      // 刊名行
-      Row() {
-        Text('THE DAILY GAZETTE')
-          .fontSize(StyleConstants.FONT_CAPTION)
-          .fontWeight(900)
-          .fontColor($r('app.color.text_primary'))
-          .letterSpacing(2)
-          .maxLines(1)
-        Blank()
-        Text('NO.017')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
-          .letterSpacing(2)
-          .maxLines(1)
-      }
-      .width('100%')
-      .height(20)
-      .alignItems(VerticalAlign.Center)
-
-      // 粗线
-      Column()
-        .width('100%')
-        .height(StyleConstants.RULE_HEAVY)
-        .backgroundColor($r('app.color.text_primary'))
-
-      // 日期行 + 设置入口
-      Row({ space: StyleConstants.SPACE_SM }) {
-        Text(this.todayDateLabel)
-          .fontSize(StyleConstants.FONT_CAPTION)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .letterSpacing(2)
-        Text(this.todayWeekday)
-          .fontSize(StyleConstants.FONT_CAPTION)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
-          .letterSpacing(1)
-        Blank()
-        SettingsGear({
-          onTap: () => {
-            this.pathStack.pushPathByName(RouterConstants.PAGE_SETTINGS, '');
-          }
-        })
-      }
-      .width('100%')
-      .height(44)
-      .alignItems(VerticalAlign.Center)
-
-      // 细线
-      Column()
-        .width('100%')
-        .height(StyleConstants.HAIRLINE_HEIGHT)
-        .backgroundColor($r('app.color.accent_secondary'))
-
-      // 主标题 + 水獭编辑员：底纸错位 + 主纸切角 + 朱红套印条
       Stack({ alignContent: Alignment.TopStart }) {
-        // 主纸 + 右上切角
-        Stack({ alignContent: Alignment.TopEnd }) {
-          Column()
-            .width('100%')
-            .height(76)
-            .backgroundColor($r('app.color.surface_primary'))
-            .backgroundImage($r('app.media.newsprint_grain'), ImageRepeat.XY)
-            .backgroundImageSize({ width: 256, height: 256 })
-          Column()
-            .width(12)
-            .height(12)
-            .backgroundColor($r('app.color.background_primary'))
-            .offset({ x: 6, y: -6 })
+        // 手账模式：深蓝撕纸 + 胶带 + 贴纸水獭；极简模式：一块干净的白卡
+        if (this.uiMode === UiMode.JOURNAL) {
+          Image($r('app.media.torn_note_deep_blue'))
+            .width('90%')
+            .aspectRatio(700 / 420)
+            .objectFit(ImageFit.Fill)
         }
-        .width('72%')
-        .offset({ x: -StyleConstants.PAGE_PADDING_H, y: 26 })
 
-        Row() {
-          OtterSlot({
-            state: OtterState.IDLE,
-            slotWidth: StyleConstants.OTTER_MASTHEAD
-          })
-        }
-        .width('100%')
-        .justifyContent(FlexAlign.End)
-        .offset({ x: 8, y: -2 })
+        Column({ space: 6 }) {
+          Row({ space: 0 }) {
+            Text('今')
+              .fontSize(54)
+              .fontWeight(900)
+              .fontColor(this.uiMode === UiMode.JOURNAL
+                ? $r('app.color.archive_paper')
+                : Theme.text(this.uiMode))
+              .maxLines(1)
+            Text('日')
+              .fontSize(54)
+              .fontWeight(900)
+              .fontColor(this.uiMode === UiMode.JOURNAL
+                ? $r('app.color.accent_mustard')
+                : Theme.text(this.uiMode))
+              .offset({ y: 6 })
+              .maxLines(1)
+          }
+          .alignItems(VerticalAlign.Top)
 
-        Column() {
-          Text('今')
-            .fontSize(StyleConstants.FONT_MASTHEAD_TITLE)
-            .fontWeight(900)
-            .fontColor($r('app.color.text_primary'))
-          Text('日')
-            .fontSize(StyleConstants.FONT_MASTHEAD_TITLE)
-            .fontWeight(900)
-            .fontColor($r('app.color.text_primary'))
-            .margin({ left: StyleConstants.SPACE_XL })
-          // 朱红套印条：编辑标记，不承载文字
-          Column()
-            .width(36)
-            .height(4)
-            .backgroundColor($r('app.color.accent_vermilion'))
-            .margin({ left: StyleConstants.SPACE_XS, top: StyleConstants.SPACE_XS })
+          Row({ space: 8 }) {
+            Text(this.todayDateLabel)
+              .fontFamily('serif')
+              .fontSize(14)
+              .fontWeight(900)
+              .fontColor(this.uiMode === UiMode.JOURNAL
+                ? $r('app.color.archive_ink')
+                : Theme.sub(this.uiMode))
+              .maxLines(1)
+            Text(this.todayWeekday)
+              .fontSize(11)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.uiMode === UiMode.JOURNAL
+                ? $r('app.color.archive_ink')
+                : Theme.sub(this.uiMode))
+              .maxLines(1)
+          }
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .backgroundImage(this.uiMode === UiMode.JOURNAL ? $r('app.media.ticket_coral') : undefined)
+          .backgroundImageSize({ width: '100%', height: '100%' })
+          .rotate({ angle: this.uiMode === UiMode.JOURNAL ? -2 : 0 })
         }
+        .width(this.uiMode === UiMode.JOURNAL ? '90%' : '100%')
+        .padding({
+          left: this.uiMode === UiMode.JOURNAL ? 44 : 4,
+          top: this.uiMode === UiMode.JOURNAL ? 40 : 6
+        })
         .alignItems(HorizontalAlign.Start)
-        .width('100%')
+
+        if (this.uiMode === UiMode.JOURNAL) {
+          Row() {
+            Blank()
+            OtterSlot({ state: OtterState.IDLE, slotWidth: 108 })
+              .rotate({ angle: 8 })
+          }
+          .width('100%')
+          .offset({ x: 22, y: 52 })
+        }
+
+        if (this.uiMode === UiMode.JOURNAL) {
+          Image($r('app.media.washi_grid_corner'))
+            .width(100)
+            .height(42)
+            .rotate({ angle: 18 })
+            .offset({ x: 4, y: -10 })
+        }
       }
       .width('100%')
-      .height(130)
+      .height(this.uiMode === UiMode.JOURNAL ? 180 : 132)
 
-      Column()
-        .width('100%')
-        .height(StyleConstants.RULE_MEDIUM)
-        .backgroundColor($r('app.color.text_primary'))
-
-      // 头版引导行
-      Row({ space: StyleConstants.SPACE_SM }) {
-        Text('TODAY’S LEAD')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
+      Row({ space: 8 }) {
+        if (this.uiMode === UiMode.JOURNAL) {
+          Text(`${this.activeItems().length < 10 ? '0' : ''}${this.activeItems().length}`)
+            .fontSize(18)
+            .fontWeight(900)
+            .fontColor($r('app.color.archive_ink'))
+            .padding({ left: 12, right: 12, top: 4, bottom: 4 })
+            .backgroundImage($r('app.media.ticket_amber'))
+            .backgroundImageSize({ width: '100%', height: '100%' })
+            .rotate({ angle: -1.5 })
+        } else {
+          Text(`${this.activeItems().length}`)
+            .fontSize(18)
+            .fontWeight(900)
+            .fontColor(Theme.text(this.uiMode))
+        }
+        Text('项待办')
+          .fontSize(13)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.accent_vermilion'))
-          .letterSpacing(2)
-          .maxLines(1)
-        Text(`${this.activeItems().length}`)
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(Theme.sub(this.uiMode))
           .maxLines(1)
         Blank()
         this.ViewToggle()
       }
       .width('100%')
-      .height(44)
+      .height(48)
+      .border({ width: { bottom: 1 }, color: Theme.rule(this.uiMode) })
       .alignItems(VerticalAlign.Center)
     }
-    .alignItems(HorizontalAlign.Start)
     .width('100%')
-    .margin({ bottom: StyleConstants.SPACE_MD })
+    .margin({ bottom: 10 })
+  }
+
+  /** 间隔票根按位置轮换四种颜色，避免整页同一个紫 */
+  private gapTicket(index: number): Resource {
+    const tickets: Resource[] = [
+      $r('app.media.ticket_coral'),
+      $r('app.media.ticket_amber'),
+      $r('app.media.ticket_salt'),
+      $r('app.media.ticket_pink')
+    ];
+    return tickets[index % tickets.length];
+  }
+
+  @Builder
+  GapTicket(label: string, index: number) {
+    Text(label)
+      .fontSize(11)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(this.uiMode === UiMode.JOURNAL ? $r('app.color.archive_ink') : Theme.sub(this.uiMode))
+      .padding({ left: this.uiMode === UiMode.JOURNAL ? 11 : 0, right: this.uiMode === UiMode.JOURNAL ? 11 : 0, top: 6, bottom: 6 })
+      .backgroundImage(this.uiMode === UiMode.JOURNAL ? this.gapTicket(index) : undefined)
+      .backgroundImageSize({ width: '100%', height: '100%' })
+      .rotate({ angle: this.uiMode === UiMode.JOURNAL ? -1.5 : 0 })
+      .maxLines(1)
   }
 
   @Builder
   GapRow(prevIndex: number, index: number) {
-    Row() {
-      Column() {
-        if (this.gapLabelAt(prevIndex, index) !== '') {
-          Row({ space: StyleConstants.SPACE_XS }) {
-            Column()
-              .width(2)
-              .height(12)
-              .backgroundColor($r('app.color.accent_vermilion'))
-            Text(this.gapLabelAt(prevIndex, index))
-              .fontSize(StyleConstants.FONT_SECTION_INDEX)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
-              .letterSpacing(2)
-              .maxLines(1)
-          }
-          .padding({
-            left: 8,
-            right: 10,
-            top: 4,
-            bottom: 4
-          })
-          .backgroundColor($r('app.color.surface_primary'))
-          .rotate({ angle: -2 })
-        }
+    Row({ space: 9 }) {
+      if (this.gapLabelAt(prevIndex, index) !== '') {
+        this.GapTicket(this.gapLabelAt(prevIndex, index), index)
+        Column()
+          .height(1)
+          .layoutWeight(1)
+          .backgroundColor($r('app.color.archive_rule'))
+          .opacity(0.35)
       }
-      .padding({ left: StyleConstants.SPACE_LG })
-      Blank()
     }
     .width('100%')
-    .height(this.gapHeightAt(prevIndex, index))
+    .height(this.gapLabelAt(prevIndex, index) === '' ?
+      this.gapHeightAt(prevIndex, index) : Math.max(29, this.gapHeightAt(prevIndex, index)))
     .alignItems(VerticalAlign.Center)
   }
 
@@ -388,13 +353,67 @@ export struct TodayDashboard {
       data: item,
       role: resolveSlipRole(item, index),
       isNext: index === 0,
-      indexLabel: this.noLabel(index),
+      indexLabel: `第 ${this.noShort(index)} 则`,
       entryNo: this.noShort(index),
-      tagTone: index,
       onCardClick: () => {
         this.goDetail(item);
       }
     })
+  }
+
+
+  /** 当前最紧的一条：靠错位、字重和一条细线强调，而不是整块填色 */
+  @Builder
+  CurrentEntry(item: ReminderCardData, index: number) {
+    Row() {
+      Column().width(14)
+      Column({ space: 6 }) {
+        Row({ space: 10 }) {
+          Text('当前')
+            .fontSize(10)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.accent_primary'))
+            .letterSpacing(2)
+          Column()
+            .width(40)
+            .height(1.5)
+            .backgroundColor(this.uiMode === UiMode.JOURNAL
+              ? $r('app.color.accent_mustard')
+              : Theme.rule(this.uiMode))
+          Blank()
+          Text(item.timeText())
+            .fontFamily('serif')
+            .fontSize(20)
+            .fontWeight(900)
+            .fontColor($r('app.color.text_primary'))
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Text(item.content)
+          .fontSize(26)
+          .fontWeight(900)
+          .fontColor($r('app.color.text_primary'))
+          .lineHeight(34)
+          .maxLines(4)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        if (item.hasLocation()) {
+          Text(item.locationText())
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .padding({ bottom: 14 })
+      .border({ width: { bottom: 1.5 }, color: $r('app.color.archive_rule') })
+      .onClick(() => this.goDetail(item))
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .padding({ top: 10, bottom: 6 })
   }
 
   @Builder
@@ -403,14 +422,18 @@ export struct TodayDashboard {
       if (this.activeItems().length === 0) {
         EmptyState({
           title: '今天没有待办提醒',
-          subtitle: '时间公报还是空白的'
+          subtitle: '可以记下今天想做的事'
         })
       } else {
         ForEach(this.activeItems(), (item: ReminderCardData, index: number) => {
           if (index > 0) {
             this.GapRow(index - 1, index)
           }
-          this.SlipRow(item, index)
+          if (index === 0) {
+            this.CurrentEntry(item, index)
+          } else {
+            this.SlipRow(item, index)
+          }
         }, (item: ReminderCardData) => `${this.storeVersion}-${item.renderKey()}`)
       }
     }
@@ -422,15 +445,15 @@ export struct TodayDashboard {
     if (this.doneItems().length > 0) {
       Column({ space: StyleConstants.SPACE_SM }) {
         Row({ space: StyleConstants.SPACE_SM }) {
-          Text('SEALED RECORDS')
+          Text('完成归档')
             .fontSize(StyleConstants.FONT_SECTION_INDEX)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_secondary'))
             .letterSpacing(2)
-          Text(`${this.doneItems().length}`)
-            .fontSize(StyleConstants.FONT_SECTION_INDEX)
+          Text(`${this.doneItems().length} 条`)
+            .fontSize(11)
             .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.accent_secondary'))
+            .fontColor($r('app.color.archive_rule'))
           Blank()
           Column()
             .width(StyleConstants.SPACE_XXL)
@@ -458,6 +481,13 @@ export struct TodayDashboard {
   // ---------- 时间长卷 ----------
 
   /** 节点：时间在左栏，短刻度连接，内容在右。刻度只属于本节点，不跨行。 */
+  private timelineInk(item: ReminderCardData): ResourceColor {
+    if (Theme.isMinimal(this.uiMode)) {
+      return Theme.text(this.uiMode);
+    }
+    return item.hasLocation() ? $r('app.color.accent_coral') : $r('app.color.accent_sky');
+  }
+
   @Builder
   TimelineNode(item: ReminderCardData) {
     Row({ space: StyleConstants.SPACE_MD }) {
@@ -476,10 +506,10 @@ export struct TodayDashboard {
       Column() {
         Column()
           .width(14)
-          .height(StyleConstants.RULE_HEAVY)
+          .height(3)
           .backgroundColor(item.isCompleted()
             ? $r('app.color.border_subtle')
-            : $r('app.color.text_primary'))
+            : this.timelineInk(item))
       }
       .width(StyleConstants.TIMELINE_MARK_WIDTH)
       .alignItems(HorizontalAlign.Center)
@@ -537,7 +567,7 @@ export struct TodayDashboard {
       Column() {
         Column()
           .width(StyleConstants.HAIRLINE_HEIGHT)
-          .height(this.timelineGapHeightAt(prevIndex, index))
+          .height(Math.max(29, this.timelineGapHeightAt(prevIndex, index)))
           .backgroundColor($r('app.color.brand_primary'))
           .opacity(0.5)
       }
@@ -545,19 +575,15 @@ export struct TodayDashboard {
       .alignItems(HorizontalAlign.Center)
 
       Column() {
-        Text(this.timelineGapLabelAt(prevIndex, index))
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_secondary'))
-          .opacity(0.85)
-          .letterSpacing(2)
-          .maxLines(1)
+        if (this.timelineGapLabelAt(prevIndex, index) !== '') {
+          this.GapTicket(this.timelineGapLabelAt(prevIndex, index), index)
+        }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.End)
     }
     .width('100%')
-    .height(this.timelineGapHeightAt(prevIndex, index))
+    .height(Math.max(29, this.timelineGapHeightAt(prevIndex, index)))
     .alignItems(VerticalAlign.Center)
   }
 
@@ -607,8 +633,8 @@ export struct TodayDashboard {
         Column()
           .width(3)
           .height(14)
-          .backgroundColor($r('app.color.accent_vermilion'))
-        Text('TIMELINE')
+          .backgroundColor($r('app.color.archive_rule'))
+        Text('时序索引')
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
@@ -646,7 +672,7 @@ export struct TodayDashboard {
               .width(3)
               .height(14)
               .backgroundColor($r('app.color.accent_sage'))
-            Text('NO FIXED TIME')
+            Text('地点便笺')
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
@@ -673,59 +699,27 @@ export struct TodayDashboard {
     .width('100%')
   }
 
-  /**
-   * 新建入口：右偏置的"表冠"操作。高度 52vp（≥44），文案明确，
-   * 位于 Scroll 内，不会被底部 TabBar 遮挡。
-   */
   @Builder
   NewEntryBlock() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      // 一条短栏线代替原来的虚线与轴标记：轴已经不存在，装饰也随之删除
-      Column()
-        .width(StyleConstants.SPACE_XXL)
-        .height(StyleConstants.HAIRLINE_HEIGHT)
-        .backgroundColor($r('app.color.text_primary'))
-
-      Blank()
-
-      Row({ space: StyleConstants.SPACE_MD }) {
-        Row({ space: 3 }) {
-          Column()
-            .width(2)
-            .height(StyleConstants.SPACE_SM)
-            .backgroundColor($r('app.color.text_primary'))
-            .opacity(0.5)
-          Column()
-            .width(2)
-            .height(StyleConstants.SPACE_MD)
-            .backgroundColor($r('app.color.text_primary'))
-            .opacity(0.72)
-          Column()
-            .width(2)
-            .height(StyleConstants.SPACE_LG)
-            .backgroundColor($r('app.color.text_primary'))
-        }
-        .alignItems(VerticalAlign.Center)
-
-        Text('新建提醒')
-          .fontSize(StyleConstants.FONT_BODY)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-      }
-      .padding({
-        left: StyleConstants.SPACE_XL,
-        right: StyleConstants.SPACE_XL
-      })
-      .height(52)
-      .backgroundColor($r('app.color.accent_primary'))
-      .onClick(() => {
-        this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
-          new ReminderEditNavParam(RouterConstants.EDIT_MODE_CREATE));
-      })
+      Text('＋ 新建提醒')
+        .fontSize(15)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.archive_ink'))
+        .padding({ left: 14, right: 14 })
+        .height(46)
+        .backgroundImage(this.uiMode === UiMode.JOURNAL ? $r('app.media.ticket_salt') : undefined)
+        .backgroundImageSize({ width: '100%', height: '100%' })
+        .onClick(() => {
+          this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
+            new ReminderEditNavParam(RouterConstants.EDIT_MODE_CREATE));
+        })
     }
     .width('100%')
-    .margin({ top: StyleConstants.SPACE_XXL })
+    .justifyContent(FlexAlign.End)
+    .padding({ top: 12 })
+    .margin({ top: StyleConstants.SPACE_SECTION })
+    .border({ width: { top: 1 }, color: $r('app.color.border_subtle') })
   }
 
   goDetail(item: ReminderCardData): void {

@@ -9,6 +9,8 @@ export class RouterConstants {
   static readonly PAGE_REMINDER_EDIT: string = 'reminderEdit';
   /** 设置页：由首页右上角齿轮进入，不再作为底部 Tab */
   static readonly PAGE_SETTINGS: string = 'settings';
+  /** 草稿箱 */
+  static readonly PAGE_DRAFT_LIST: string = 'draftList';
   static readonly EDIT_MODE_CREATE: string = 'create';
   static readonly EDIT_MODE_EDIT: string = 'edit';
 }
@@ -34,9 +36,12 @@ export class ReminderDetailNavParam {
 export class ReminderEditNavParam {
   readonly mode: string;
   readonly data?: ReminderCardData;
+  /** 从草稿箱进入时带上草稿键，编辑页据此恢复并更新同一条草稿 */
+  readonly draftKey?: string;
 
-  constructor(mode: string, data?: ReminderCardData) {
+  constructor(mode: string, data?: ReminderCardData, draftKey?: string) {
     this.mode = mode;
     this.data = data;
+    this.draftKey = draftKey;
   }
 }

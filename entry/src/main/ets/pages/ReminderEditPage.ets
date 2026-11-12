@@ -4,8 +4,9 @@ import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
 import { RouterConstants, ReminderEditNavParam } from '../common/RouterConstants';
 import { UiReminderStore } from '../common/UiReminderStore';
+import { DraftStore, ReminderDraft } from '../common/DraftStore';
 import { parseTimeInput, TimeParseResult } from '../common/UiTimeInputParser';
-import { UiReminderSource, UiReminderStatus, UiTriggerType } from '../common/UiReminderSemantics';
+import { UiReminderSource, UiReminderStatus, UiTriggerType, UiLocationTriggerMode } from '../common/UiReminderSemantics';
 import { ReminderCardData } from '../components/ReminderCard';
 import { TopBar } from '../components/TopBar';
 import { FormItem } from '../components/FormItem';
@@ -28,8 +29,13 @@ export struct ReminderEditPage {
   @State selectedTimeMs: number = 0;
   @State manualInput: string = '';
   @State saveError: string = '';
+  /** 触发方式选择：时间 / 地点 / 时间+地点 */
+  @State typeSel: string = UiTriggerType.TIME;
+  /** 地点名称（V1 用文本占位，等地点选择器接入） */
+  @State sceneInput: string = '';
 
   private original: ReminderCardData | undefined = undefined;
+  private draftKeyValue: string = '';
   private initialTitle: string = '';
   private initialTimeMs: number = 0;
 
@@ -38,17 +44,26 @@ export struct ReminderEditPage {
       this.pathStack.getParamByName(RouterConstants.PAGE_REMINDER_EDIT) as Array<Object>;
     if (params.length > 0) {
       const last: Object = params[params.length - 1];
-      if (last instanceof ReminderEditNavParam && last.mode === RouterConstants.EDIT_MODE_EDIT) {
-        this.pageTitle = '编辑提醒';
-        this.pageOverline = '修改中';
-        if (last.data !== undefined) {
-          this.original = last.data;
-          this.titleInput = last.data.content;
-          if (last.data.triggerTime !== undefined) {
-            this.selectedTimeMs = last.data.triggerTime;
+      if (last instanceof ReminderEditNavParam) {
+        if (last.draftKey !== undefined && last.draftKey !== '') {
+          this.draftKeyValue = last.draftKey;
+        }
+        if (last.mode === RouterConstants.EDIT_MODE_EDIT) {
+          this.pageTitle = '编辑提醒';
+          this.pageOverline = '修改中';
+          if (last.data !== undefined) {
+            this.original = last.data;
+            this.titleInput = last.data.content;
+            if (last.data.triggerTime !== undefined) {
+              this.selectedTimeMs = last.data.triggerTime;
+            }
           }
         }
       }
+    }
+    if (this.original !== undefined) {
+      this.typeSel = this.original.triggerType;
+      this.sceneInput = this.original.sceneName === undefined ? '' : this.original.sceneName;
     }
     if (this.selectedTimeMs === 0) {
       const next: Date = new Date();
@@ -56,8 +71,48 @@ export struct ReminderEditPage {
       next.setHours(next.getHours() + 1);
       this.selectedTimeMs = next.getTime();
     }
+    // 没有显式传入草稿键时：编辑已有提醒用它的 id，新建则生成一个新的草稿键
+    if (this.draftKeyValue === '') {
+      this.draftKeyValue = this.original === undefined
+        ? `draft-${Date.now()}`
+        : this.original.id;
+    }
+    // 有草稿就恢复，并提示用户
+    const draft: ReminderDraft | undefined = DraftStore.get(this.draftKeyValue);
+    if (draft !== undefined) {
+      this.titleInput = draft.title;
+      if (draft.timeMs > 0) {
+        this.selectedTimeMs = draft.timeMs;
+      }
+      this.typeSel = draft.triggerType;
+      this.sceneInput = draft.sceneName;
+      this.pageOverline = '已恢复草稿';
+    }
     this.initialTitle = this.titleInput;
     this.initialTimeMs = this.selectedTimeMs;
+  }
+
+  private draftKey(): string {
+    return this.draftKeyValue;
+  }
+
+  private buildDraft(): ReminderDraft {
+    return new ReminderDraft(this.titleInput, this.selectedTimeMs, this.typeSel, this.sceneInput, Date.now());
+  }
+
+  /** 页内「存草稿」：存完留在当前页，继续写 */
+  private saveDraftInPlace(): void {
+    DraftStore.save(getContext(this), this.draftKey(), this.buildDraft());
+    // 草稿已落盘，再把基线对齐，离开时就不会重复追问
+    this.initialTitle = this.titleInput;
+    this.initialTimeMs = this.selectedTimeMs;
+    this.pageOverline = '草稿已保存';
+    this.getUIContext().getPromptAction().showToast({ message: '已存为草稿' });
+  }
+
+  private saveDraftAndExit(): void {
+    DraftStore.save(getContext(this), this.draftKey(), this.buildDraft());
+    this.pathStack.pop();
   }
 
   private isDirty(): boolean {
@@ -71,23 +126,27 @@ export struct ReminderEditPage {
     }
     this.getUIContext().getPromptAction().showDialog({
       title: '离开编辑',
-      message: '改动尚未保存，是否保存？',
+      message: '改动尚未保存。可以存成草稿，下次进来继续写。',
       buttons: [
-        { text: '不保存', color: $r('app.color.text_secondary') },
+        { text: '存草稿', color: $r('app.color.text_secondary') },
+        { text: '放弃', color: $r('app.color.text_secondary') },
         { text: '保存', color: $r('app.color.detail_ink') }
       ]
     }).then((result: promptAction.ShowDialogSuccessResponse) => {
-      if (result.index === 1) {
-        this.save();
-      } else if (result.index === 0) {
+      if (result.index === 0) {
+        this.saveDraftAndExit();
+      } else if (result.index === 1) {
+        DraftStore.clear(getContext(this), this.draftKey());
         this.pathStack.pop();
+      } else if (result.index === 2) {
+        this.save();
       }
     }).catch(() => {
     });
   }
 
   private triggerType(): string {
-    return this.original === undefined ? UiTriggerType.TIME : this.original.triggerType;
+    return this.typeSel;
   }
 
   private triggerTypeText(): string {
@@ -102,7 +161,7 @@ export struct ReminderEditPage {
   }
 
   private timeRelevant(): boolean {
-    return this.triggerType() !== UiTriggerType.LOCATION;
+    return this.typeSel !== UiTriggerType.LOCATION;
   }
 
   private dateLabel(): string {
@@ -139,6 +198,9 @@ export struct ReminderEditPage {
           current.getHours(), current.getMinutes(), 0, 0
         );
         this.selectedTimeMs = next.getTime();
+        if (next.getTime() < Date.now()) {
+          this.getUIContext().getPromptAction().showToast({ message: '这个时间已经过去，保存前请调整' });
+        }
       }
     });
   }
@@ -155,6 +217,9 @@ export struct ReminderEditPage {
           value.hour, value.minute, 0, 0
         );
         this.selectedTimeMs = next.getTime();
+        if (next.getTime() < Date.now()) {
+          this.getUIContext().getPromptAction().showToast({ message: '这个时间已经过去，保存前请调整' });
+        }
       }
     });
   }
@@ -219,6 +284,10 @@ export struct ReminderEditPage {
       this.saveError = '请填写提醒内容';
       return;
     }
+    if (this.typeSel !== UiTriggerType.TIME && this.sceneInput.trim() === '') {
+      this.saveError = '请填写地点名称';
+      return;
+    }
     if (this.timeRelevant() && this.isPastSelected()) {
       this.saveError = '所选时间已过去，请重新选择';
       this.showPastTimeWarning();
@@ -230,26 +299,30 @@ export struct ReminderEditPage {
       next = new ReminderCardData(
         `ui-${Date.now()}`,
         content,
-        UiTriggerType.TIME,
+        this.typeSel,
         UiReminderSource.MANUAL,
         UiReminderStatus.ACTIVE,
-        this.selectedTimeMs
+        this.timeRelevant() ? this.selectedTimeMs : undefined,
+        undefined,
+        this.typeSel === UiTriggerType.TIME ? undefined : this.sceneInput.trim(),
+        UiLocationTriggerMode.ENTER
       );
     } else {
       next = new ReminderCardData(
         this.original.id,
         content,
-        this.original.triggerType,
+        this.typeSel,
         this.original.source,
         this.original.status,
         this.timeRelevant() ? this.selectedTimeMs : undefined,
         this.original.sceneId,
-        this.original.sceneName,
+        this.typeSel === UiTriggerType.TIME ? undefined : this.sceneInput.trim(),
         this.original.locationTriggerMode
       );
     }
 
     UiReminderStore.upsert(next);
+    DraftStore.clear(getContext(this), this.draftKey());
     this.pathStack.pop();
   }
 
@@ -267,6 +340,8 @@ export struct ReminderEditPage {
           Column() {
             this.MastheadBlock()
             this.ContentSection()
+            // 时间区块始终保留（地点提醒下缩成一行说明）：
+            // 整段消失会让 02 编号缺一个、下面的内容整块上跳
             this.TimeSection()
             this.TriggerSection()
             this.EditorNote()
@@ -556,23 +631,42 @@ export struct ReminderEditPage {
       this.SectionNumber('03', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
         this.SectionHead('触发条件', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
-        FormItem({
-          label: '触发类型',
-          value: this.triggerTypeText(),
-          placeholder: '',
-          onTap: () => {
-          }
-        })
-        FormItem({
-          label: '地点',
-          value: this.original !== undefined && this.original.sceneName !== undefined
-            ? this.original.sceneName
-            : '',
-          placeholder: '未设置',
-          badgeLabel: '进入时',
-          onTap: () => {
-          }
-        })
+
+        Row({ space: 8 }) {
+          this.TypeChip('时间', UiTriggerType.TIME)
+          this.TypeChip('地点', UiTriggerType.LOCATION)
+          this.TypeChip('时间 + 地点', UiTriggerType.BOTH)
+        }
+        .width('100%')
+        .margin({ top: 4 })
+
+        if (this.typeSel !== UiTriggerType.TIME) {
+          TextInput({
+            placeholder: '地点名称，例如 家 / 公司',
+            text: this.sceneInput
+          })
+            .onChange((value: string) => {
+              this.sceneInput = value;
+              this.saveError = '';
+            })
+            .fontSize(StyleConstants.FONT_BODY)
+            .fontColor(Theme.text(this.uiMode))
+            .placeholderColor(Theme.sub(this.uiMode))
+            .backgroundColor(Color.Transparent)
+            .padding({ left: 0, right: 0 })
+            .height(44)
+            .width('100%')
+          Column()
+            .width('100%')
+            .height(StyleConstants.HAIRLINE_HEIGHT)
+            .backgroundColor(Theme.rule(this.uiMode))
+
+          Text('地点提醒需要定位与场景服务；当前阶段只保存名称，等公共层接入后生效。')
+            .fontSize(9)
+            .fontColor(Theme.sub(this.uiMode))
+            .opacity(0.8)
+            .maxLines(2)
+        }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -580,6 +674,38 @@ export struct ReminderEditPage {
     .width('100%')
     .alignItems(VerticalAlign.Top)
     .margin({ top: StyleConstants.SPACE_SECTION })
+  }
+
+  @Builder
+  TypeChip(label: string, type: string) {
+    Text(label)
+      .fontSize(12)
+      .fontWeight(this.typeSel === type ? 900 : FontWeight.Medium)
+      .fontColor(this.typeSel === type ? $r('app.color.archive_paper') : Theme.text(this.uiMode))
+      .height(34)
+      .padding({ left: 12, right: 12 })
+      .textAlign(TextAlign.Center)
+      .backgroundColor(this.typeSel === type ? Theme.text(this.uiMode) : Color.Transparent)
+      .border({
+        width: this.typeSel === type ? 0 : 1,
+        color: Theme.rule(this.uiMode)
+      })
+      .borderRadius({
+        topLeft: 0,
+        topRight: 8,
+        bottomLeft: 0,
+        bottomRight: 8
+      })
+      .onClick(() => {
+        if (this.typeSel === type) {
+          return;
+        }
+        // 切换会改变时间区块的内容高度；动画过渡，避免整页猛地上下弹
+        this.getUIContext().animateTo({ duration: 200, curve: Curve.EaseInOut }, () => {
+          this.typeSel = type;
+          this.saveError = '';
+        });
+      })
   }
 
   @Builder
@@ -629,6 +755,18 @@ export struct ReminderEditPage {
           .maxLines(2)
           .width('100%')
       }
+      Text('存草稿')
+        .fontSize(StyleConstants.FONT_BODY_SM)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(Theme.sub(this.uiMode))
+        .decoration({ type: TextDecorationType.Underline })
+        .height(StyleConstants.TOUCH_TARGET_MIN)
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .onClick(() => {
+          this.saveDraftInPlace();
+        })
+
       Row() {
         Text('保存提醒')
           .fontSize(StyleConstants.FONT_BODY)

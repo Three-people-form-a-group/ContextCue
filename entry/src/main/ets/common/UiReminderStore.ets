@@ -18,6 +18,8 @@ export class UiReminderStore {
 
   private static active: ReminderCardData[] = MockReminderData.TODAY_ACTIVE.slice();
   private static done: ReminderCardData[] = MockReminderData.TODAY_DONE.slice();
+  /** 已删除的 id（演示数据来自 Mock，不删除分组，只在这里屏蔽） */
+  private static deletedIds: string[] = [];
 
   static getVersion(): number {
     const v: number | undefined = AppStorage.get<number>(UiReminderStore.KEY_VERSION);
@@ -69,6 +71,32 @@ export class UiReminderStore {
       }
     }
     return undefined;
+  }
+
+  static isDeleted(id: string): boolean {
+    return UiReminderStore.deletedIds.indexOf(id) >= 0;
+  }
+
+  /** 删除一条提醒：从活动/已完成里移除，并记下 id 屏蔽 Mock 数据 */
+  static remove(id: string): void {
+    const keepActive: ReminderCardData[] = [];
+    for (let i = 0; i < UiReminderStore.active.length; i++) {
+      if (UiReminderStore.active[i].id !== id) {
+        keepActive.push(UiReminderStore.active[i]);
+      }
+    }
+    UiReminderStore.active = keepActive;
+    const keepDone: ReminderCardData[] = [];
+    for (let i = 0; i < UiReminderStore.done.length; i++) {
+      if (UiReminderStore.done[i].id !== id) {
+        keepDone.push(UiReminderStore.done[i]);
+      }
+    }
+    UiReminderStore.done = keepDone;
+    if (!UiReminderStore.isDeleted(id)) {
+      UiReminderStore.deletedIds.push(id);
+    }
+    AppStorage.setOrCreate<number>(UiReminderStore.KEY_VERSION, UiReminderStore.getVersion() + 1);
   }
 
   /** 用同 id 的记录替换；不存在则作为新建追加到 active。 */

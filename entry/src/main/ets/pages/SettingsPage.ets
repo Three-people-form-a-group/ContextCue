@@ -154,8 +154,8 @@ export struct SettingsPage {
       .width('100%')
 
       Row({ space: 8 }) {
-        this.ModeOption('极简', UiMode.MINIMAL, '冷灰白 · 无装饰')
-        this.ModeOption('手账', UiMode.JOURNAL, '拼贴 · 纸张 · 胶带')
+        this.ModeOption('极简', UiMode.MINIMAL)
+        this.ModeOption('手账', UiMode.JOURNAL)
       }
       .width('100%')
     }
@@ -164,20 +164,17 @@ export struct SettingsPage {
   }
 
   @Builder
-  ModeOption(label: string, mode: string, desc: string) {
-    Column({ space: 4 }) {
+  ModeOption(label: string, mode: string) {
+    Column() {
       Text(label)
-        .fontSize(15)
+        .fontSize(14)
         .fontWeight(900)
         .fontColor(this.uiMode === mode ? Theme.bg(this.uiMode) : Theme.text(this.uiMode))
-      Text(desc)
-        .fontSize(9)
-        .fontColor(this.uiMode === mode ? Theme.bg(this.uiMode) : Theme.sub(this.uiMode))
-        .opacity(this.uiMode === mode ? 0.85 : 1)
     }
     .layoutWeight(1)
-    .alignItems(HorizontalAlign.Start)
-    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+    .alignItems(HorizontalAlign.Center)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 12, right: 12, top: 12, bottom: 12 })
     .backgroundColor(this.uiMode === mode ? Theme.text(this.uiMode) : Theme.surface(this.uiMode))
     .borderRadius({
       topLeft: 0,

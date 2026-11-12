@@ -5,6 +5,7 @@ import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '.
 import { MockReminderData, ReminderGroupData } from '../common/MockReminderData';
 import { UiReminderStore } from '../common/UiReminderStore';
 import { ReminderCardData } from '../components/ReminderCard';
+import { UiTriggerType, UiLocationTriggerMode } from '../common/UiReminderSemantics';
 import { TimetableView } from '../components/TimetableView';
 
 /**
@@ -37,6 +38,48 @@ export struct ReminderListPage {
     this.calMonth = now.getMonth() + 1;
   }
 
+
+  /** 左栏时间：纯地点提醒写"到达时"，时间+地点写"20:00 后" */
+  private timeLabel(item: ReminderCardData): string {
+    if (item.triggerType === UiTriggerType.LOCATION) {
+      return '到达时';
+    }
+    if (item.triggerType === UiTriggerType.BOTH) {
+      return `${item.timeText()} 后`;
+    }
+    return item.timeText();
+  }
+
+  /** 地点补充行：把"进入/离开"和提醒关系写清楚 */
+  private placeLabel(item: ReminderCardData): string {
+    if (!item.hasLocation()) {
+      return '';
+    }
+    const scene: string = item.sceneName === undefined || item.sceneName === '' ? '未设置地点' : item.sceneName;
+    const mode: string = item.locationTriggerMode === UiLocationTriggerMode.EXIT ? '离开时' : '到达时';
+    return `${scene}（${mode}提醒）`;
+  }
+
+  /** 分组对应的日期（今天 / 明天），用于在标题旁突出"日" */
+  private groupDate(groupIndex: number): Date | undefined {
+    if (groupIndex > 1) {
+      return undefined;
+    }
+    const now: Date = new Date();
+    if (groupIndex === 1) {
+      now.setDate(now.getDate() + 1);
+    }
+    return now;
+  }
+
+  /** 回到今天：月历与列表一起复位 */
+  private backToToday(): void {
+    const now: Date = new Date();
+    this.calYear = now.getFullYear();
+    this.calMonth = now.getMonth() + 1;
+    this.selectedDay = now.getDate();
+  }
+
   /** 所有提醒：Mock 分组 + 数据源里新增的条目，按 id 去重 */
   private allReminders(): ReminderCardData[] {
     const out: ReminderCardData[] = [];
@@ -45,6 +88,9 @@ export struct ReminderListPage {
       const group: ReminderGroupData = this.groups[g];
       for (let i = 0; i < group.items.length; i++) {
         const item: ReminderCardData = this.resolve(group.items[i]);
+        if (UiReminderStore.isDeleted(item.id)) {
+          continue;
+        }
         if (seen.indexOf(item.id) < 0) {
           seen.push(item.id);
           out.push(item);
@@ -174,7 +220,10 @@ export struct ReminderListPage {
   private sortedGroupItems(group: ReminderGroupData): ReminderCardData[] {
     const resolved: ReminderCardData[] = [];
     for (let i = 0; i < group.items.length; i++) {
-      resolved.push(this.resolve(group.items[i]));
+      const item: ReminderCardData = this.resolve(group.items[i]);
+      if (!UiReminderStore.isDeleted(item.id)) {
+        resolved.push(item);
+      }
     }
     return this.sortItems(resolved);
   }
@@ -184,11 +233,31 @@ export struct ReminderListPage {
    * 今日组会追加数据源里「不属于任何 Mock 分组」的新建提醒，
    * 否则新建的提醒永远不会出现在全部页。
    */
+  /** 一条提醒应该落在哪个分组：今天 / 明天 / 本周稍后 */
+  private groupIndexOfDate(ms: number | undefined): number {
+    if (ms === undefined) {
+      return this.groups.length - 1;
+    }
+    const target: Date = new Date(ms);
+    const now: Date = new Date();
+    const a: number = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
+    const b: number = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const days: number = Math.floor((a - b) / 86400000);
+    if (days <= 0) {
+      return 0;
+    }
+    if (days === 1) {
+      return 1;
+    }
+    return 2;
+  }
+
+  /**
+   * 实际渲染用的分组条目。
+   * 数据源里不属于任何 Mock 分组的条目，按日期落到 今天 / 明天 / 本周稍后。
+   */
   private liveGroupItems(group: ReminderGroupData, groupIndex: number): ReminderCardData[] {
     const base: ReminderCardData[] = this.sortedGroupItems(group);
-    if (groupIndex !== 0) {
-      return base;
-    }
     const known: string[] = [];
     for (let g = 0; g < this.groups.length; g++) {
       for (let i = 0; i < this.groups[g].items.length; i++) {
@@ -198,12 +267,17 @@ export struct ReminderListPage {
     const extra: ReminderCardData[] = [];
     const storeItems: ReminderCardData[] = UiReminderStore.getActive();
     for (let i = 0; i < storeItems.length; i++) {
-      if (known.indexOf(storeItems[i].id) < 0) {
-        extra.push(storeItems[i]);
+      const item: ReminderCardData = storeItems[i];
+      if (known.indexOf(item.id) >= 0 || UiReminderStore.isDeleted(item.id)) {
+        continue;
+      }
+      if (this.groupIndexOfDate(item.triggerTime) === groupIndex) {
+        extra.push(item);
       }
     }
     return this.sortItems(base.concat(extra));
   }
+
 
   build() {
     if (this.viewMode === 'timetable') {
@@ -278,8 +352,8 @@ export struct ReminderListPage {
             .fontSize(18)
             .fontWeight(900)
             .fontColor(Theme.accent(this.uiMode))
-            .width(30)
-            .height(36)
+            .width(StyleConstants.TOUCH_TARGET_MIN)
+            .height(StyleConstants.TOUCH_TARGET_MIN)
             .textAlign(TextAlign.Center)
             .onClick(() => {
               this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
@@ -340,23 +414,36 @@ export struct ReminderListPage {
   /** 分组标题：衬线大编号 + 组名 + 条数，分隔线从编号右侧起、不到底。 */
   @Builder
   GroupHeader(group: ReminderGroupData, groupIndex: number) {
-    Column({ space: 4 }) {
-      Row() {
-        Text(`${groupIndex < 9 ? '0' : ''}${groupIndex + 1}`)
-          .fontFamily('serif')
-          .fontSize(32)
-          .fontWeight(900)
-          .fontColor(Theme.ink(this.uiMode))
-          .width(56)
-        Column({ space: 1 }) {
+    Column() {
+      Row({ space: 12 }) {
+        // 手账：一天一组时，左侧一块日期牌（今天朱橙、明天暖灰），作为整页唯一的视觉焦点
+        if (this.uiMode === UiMode.JOURNAL && this.groupDate(groupIndex) !== undefined) {
+          Stack({ alignContent: Alignment.Center }) {
+            Column()
+              .width(54)
+              .height(56)
+              .backgroundColor(groupIndex === 0
+                ? $r('app.color.accent_primary')
+                : $r('app.color.plate_alt'))
+              .borderRadius({
+                topLeft: 0,
+                topRight: 10,
+                bottomLeft: 0,
+                bottomRight: 0
+              })
+            Text(`${this.groupDate(groupIndex)!.getDate()}`)
+              .fontFamily('serif')
+              .fontSize(30)
+              .fontWeight(900)
+              .fontColor(groupIndex === 0 ? $r('app.color.archive_paper') : Theme.ink(this.uiMode))
+          }
+          .width(54)
+          .height(56)
+        }
+
+        Column({ space: 3 }) {
           Row({ space: 6 }) {
-            if (this.uiMode === UiMode.JOURNAL) {
-              Column()
-                .width(10)
-                .height(10)
-                .backgroundColor(this.groupAccent(groupIndex))
-            } else {
-              // 极简模式：今天实心深橙、明天空心深橙、其余灰点
+            if (this.uiMode === UiMode.MINIMAL) {
               Column()
                 .width(groupIndex === 0 ? 8 : 7)
                 .height(groupIndex === 0 ? 8 : 7)
@@ -369,93 +456,89 @@ export struct ReminderListPage {
                 .opacity(groupIndex > 1 ? 0.35 : 1)
             }
             Text(group.groupLabel)
-              .fontSize(19)
+              .fontSize(24)
               .fontWeight(900)
               .fontColor(Theme.ink(this.uiMode))
           }
           .alignItems(VerticalAlign.Center)
-          Text(`${this.liveGroupItems(group, groupIndex).length} 条`)
-            .fontSize(10)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.uiMode === UiMode.JOURNAL
-              ? $r('app.color.archive_ink')
-              : Theme.sub(this.uiMode))
-            .letterSpacing(0.4)
-            .padding({
-              left: this.uiMode === UiMode.JOURNAL ? 6 : 0,
-              right: this.uiMode === UiMode.JOURNAL ? 6 : 0,
-              top: 2,
-              bottom: 2
-            })
-            .backgroundColor(this.uiMode === UiMode.JOURNAL
-              ? this.groupAccent(groupIndex)
-              : Color.Transparent)
-            .borderRadius(5)
+
+          Row({ space: 6 }) {
+            if (this.groupDate(groupIndex) !== undefined) {
+              Text(`${this.groupDate(groupIndex)!.getMonth() + 1} 月`)
+                .fontSize(11)
+                .fontColor(Theme.sub(this.uiMode))
+            }
+            Text(`${this.liveGroupItems(group, groupIndex).length} 条`)
+              .fontSize(11)
+              .fontColor(Theme.sub(this.uiMode))
+          }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
-      .alignItems(VerticalAlign.Bottom)
-
-      Row() {
-        Column().width(56)
-        Column()
-          .width('82%')
-          .height(1.5)
-          .backgroundColor(this.uiMode === UiMode.JOURNAL
-            ? this.groupAccent(groupIndex)
-            : Theme.rule(this.uiMode))
-        Blank()
-      }
-      .width('100%')
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding({ left: 4, right: 8, top: 8, bottom: 6 })
+    .padding({ left: 4, right: 4, top: 18, bottom: 6 })
   }
 
-  /** 时间、正文沿同一列对齐；分隔线只在正文列，右侧留白。 */
+  /**
+   * 时间栏固定在左、事项在右，两侧起点恒定。
+   * 条目不再画 L 形边框：手账模式只用留白分隔，极简模式保留一条很淡的底线。
+   * 颜色只表示"下一项"——橙点 + 一行小字，避免颜色无意义地出现。
+   */
   @Builder
-  ScheduleEntry(item: ReminderCardData, featured: boolean, showDate: boolean) {
-    Row({ space: StyleConstants.SPACE_SM }) {
-      Column({ space: 4 }) {
-        Text(item.isLocationOnly() ? '地点' : item.timeText())
-          .fontFamily(item.isLocationOnly() ? 'sans-serif' : 'serif')
-          .fontSize(item.isLocationOnly() ? 12 : (featured ? 19 : 17))
-          .minFontSize(11)
-          .fontWeight(900)
-          .fontColor(item.isCompleted()
-            ? Theme.sub(this.uiMode)
-            : Theme.ink(this.uiMode))
-          .maxLines(1)
-          .width('100%')
-        if (showDate && item.triggerTime !== undefined) {
-          Text(this.dateLabelOf(item))
-            .fontSize(9)
-            .fontColor(Theme.sub(this.uiMode))
+  ScheduleEntry(item: ReminderCardData, featured: boolean, showDate: boolean, index: number) {
+    Row({ space: StyleConstants.SPACE_MD }) {
+      // 左：窄时间栏（固定 64vp，圆点槽固定 10vp，保证时间永远从同一位置起笔）
+      Column({ space: 2 }) {
+        Row({ space: 2 }) {
+          Column()
+            .width(6)
+            .height(6)
+            .borderRadius(3)
+            .backgroundColor(featured && !item.isCompleted() ? Theme.alert(this.uiMode) : Color.Transparent)
+          Text(this.timeLabel(item))
+            .fontFamily('serif')
+            .fontSize(15)
+            .fontWeight(900)
+            .fontColor(item.isCompleted() ? Theme.sub(this.uiMode) : Theme.ink(this.uiMode))
             .maxLines(1)
         }
+        .alignItems(VerticalAlign.Center)
+
+        if (featured && !item.isCompleted()) {
+          Text('下一项')
+            .fontSize(9)
+            .fontColor(Theme.alert(this.uiMode))
+            .letterSpacing(1)
+            .padding({ left: 8 })
+        }
       }
-      .width(58)
+      .width(64)
       .alignItems(HorizontalAlign.Start)
 
-      Column({ space: 5 }) {
+      // 右：内容栏
+      Column({ space: 4 }) {
         Text(item.content)
-          .fontSize(featured ? 18 : 16)
+          .fontSize(featured ? 19 : 16)
           .fontWeight(featured ? 900 : FontWeight.Bold)
           .fontColor(item.isCompleted()
             ? Theme.sub(this.uiMode)
             : Theme.text(this.uiMode))
           .decoration({ type: item.isCompleted() ? TextDecorationType.LineThrough : TextDecorationType.None })
-          .maxLines(featured ? 3 : 2)
+          .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
         if (item.hasLocation()) {
-          Text(item.locationText())
+          Text(this.placeLabel(item))
             .fontSize(12)
+            .fontWeight(FontWeight.Regular)
             .fontColor(Theme.sub(this.uiMode))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
         }
         if (item.isCompleted()) {
           Text(item.statusText())
@@ -465,8 +548,16 @@ export struct ReminderListPage {
       }
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
-      .padding({ left: 8, bottom: 8 })
-      .border({ width: { bottom: StyleConstants.HAIRLINE_HEIGHT }, color: Theme.rule(this.uiMode) })
+      .padding({
+        left: 10,
+        bottom: 10
+      })
+      .border({
+        width: {
+          bottom: this.uiMode === UiMode.MINIMAL ? StyleConstants.HAIRLINE_HEIGHT : 0
+        },
+        color: Theme.rule(this.uiMode)
+      })
 
       Text('›')
         .fontSize(15)
@@ -475,7 +566,7 @@ export struct ReminderListPage {
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
-    .padding({ left: 4, right: 6, top: featured ? 12 : 10, bottom: 2 })
+    .padding({ left: 4, right: 4, top: featured ? 12 : 10, bottom: 2 })
     .onClick(() => {
       this.goDetail(item);
     })
@@ -483,12 +574,12 @@ export struct ReminderListPage {
 
   @Builder
   GroupListBlock() {
-    Column({ space: StyleConstants.SPACE_LG }) {
+    Column({ space: StyleConstants.SPACE_SECTION }) {
       ForEach(this.groups, (group: ReminderGroupData, groupIndex: number) => {
         Column() {
           this.GroupHeader(group, groupIndex)
           ForEach(this.liveGroupItems(group, groupIndex), (item: ReminderCardData, itemIndex: number) => {
-            this.ScheduleEntry(item, groupIndex === 0 && itemIndex === 0 && !item.isCompleted(), true)
+            this.ScheduleEntry(item, groupIndex === 0 && itemIndex === 0 && !item.isCompleted(), true, itemIndex)
           }, (item: ReminderCardData, itemIndex: number) => `${this.storeVersion}-${item.renderKey()}-${itemIndex}`)
         }
         .width('100%')
@@ -607,7 +698,19 @@ export struct ReminderListPage {
             this.shiftMonth(1);
             this.calExpanded = true;
           })
-        Text(this.calExpanded ? '收起' : '展开')
+        if (this.selectedDay !== 0) {
+          Text('回到今天')
+            .fontSize(10)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.ink(this.uiMode))
+            .height(28)
+            .padding({ left: 6, right: 6 })
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              this.backToToday();
+            })
+        }
+        Text(this.calExpanded ? '收起日历' : '展开日历')
           .fontSize(10)
           .fontWeight(FontWeight.Bold)
           .fontColor(Theme.accent(this.uiMode))
@@ -724,7 +827,7 @@ export struct ReminderListPage {
         } else {
           Column() {
             ForEach(this.itemsOnDate(this.selectedDay), (item: ReminderCardData, index: number) => {
-              this.ScheduleEntry(item, index === 0 && !item.isCompleted(), false)
+              this.ScheduleEntry(item, index === 0 && !item.isCompleted(), false, index)
             }, (item: ReminderCardData, index: number) => `${this.storeVersion}-${item.renderKey()}-${index}`)
           }
           .width('100%')

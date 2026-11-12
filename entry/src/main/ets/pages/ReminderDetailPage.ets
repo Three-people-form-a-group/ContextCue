@@ -1,6 +1,14 @@
+import { promptAction } from '@kit.ArkUI';
 import { StyleConstants } from '../common/StyleConstants';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
+import { PaperStyle } from '../common/PaperStyle';
+import { PaperStore } from '../common/PaperStore';
+import { PaperPickerSheet } from '../components/PaperPickerSheet';
+import { DoodleStore } from '../common/DoodleStore';
+import { DoodleSheet } from '../components/DoodleSheet';
+import { NoteLayoutStore } from '../common/NoteLayoutStore';
+import { parseLayout } from '../common/NoteLayoutModel';
 import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '../common/RouterConstants';
 import { UiReminderSource, UiReminderStatus, UiTriggerType } from '../common/UiReminderSemantics';
 import { UiReminderStore } from '../common/UiReminderStore';
@@ -33,9 +41,13 @@ export struct ReminderDetailPage {
   @State card: ReminderCardData =
     new ReminderCardData('', '', UiTriggerType.TIME, UiReminderSource.MANUAL, UiReminderStatus.ACTIVE);
   // 编辑页保存后数据会改变；按 id 取最新记录，避免显示旧快照。
-  // 版本号变化 → 重渲染 → 从 UI 数据源读取最新记录
-  @StorageLink('uiReminderVersion') storeVersion: number = 0;
+  // 版本号变化 → 从 UI 数据源读回最新记录（onShown 在从编辑页返回时不一定触发）
+  @StorageLink('uiReminderVersion') @Watch('onStoreChanged') storeVersion: number = 0;
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
+  @State showPaperPicker: boolean = false;
+  @State paper: string = PaperStyle.LARGE_WARM;
+  @State textHidden: boolean = false;
+  @State showDoodle: boolean = false;
 
   aboutToAppear(): void {
     const params: Array<Object> =
@@ -46,11 +58,19 @@ export struct ReminderDetailPage {
         this.card = last.data;
       }
     }
+    // 导航参数可能是旧快照（例如从编辑页返回后本页被重建），先按 id 取一次最新
+    this.refreshFromStore();
+    this.paper = PaperStore.paperOf(this.card.id);
+    DoodleStore.load(getContext(this), this.card.id);
+    NoteLayoutStore.load(getContext(this), this.card.id);
+    this.textHidden = PaperStore.isTextHidden(this.card.id);
   }
 
   private displayCard(): ReminderCardData {
     const id: string = this.card.id;
-    if (id === '') {
+    // 读一次版本号，建立刷新依赖：数据源一变，build 就会重新取最新记录
+    // （onShown 在从编辑页返回时并不一定触发，不能只靠它）
+    if (id === '' || this.storeVersion < 0) {
       return this.card;
     }
     const active: ReminderCardData[] = UiReminderStore.getActive();
@@ -68,6 +88,16 @@ export struct ReminderDetailPage {
     return this.card;
   }
 
+  /** 今日页第一条是大字号排版；这里跟着用同样的字号，预览才对得上。 */
+  private isFeatured(): boolean {
+    const active: ReminderCardData[] = UiReminderStore.getActive();
+    return active.length > 0 && active[0].id === this.card.id;
+  }
+
+  private onStoreChanged(): void {
+    this.refreshFromStore();
+  }
+
   /** 页面重新显示时（例如从编辑页返回）从数据源取最新记录。 */
   private refreshFromStore(): void {
     const latest: ReminderCardData | undefined = UiReminderStore.findById(this.card.id);
@@ -78,8 +108,9 @@ export struct ReminderDetailPage {
 
   build() {
     NavDestination() {
-      Column() {
-        TopBar({
+      Stack({ alignContent: Alignment.Bottom }) {
+        Column() {
+          TopBar({
           title: '专题',
           showBack: true,
           onBack: () => {
@@ -93,7 +124,7 @@ export struct ReminderDetailPage {
               Column()
                 .width('100%')
                 .height(6)
-                .backgroundColor(Theme.accent(this.uiMode))
+                .backgroundColor(Theme.ink(this.uiMode))
 
               Column() {
                 this.ArticleHead()
@@ -143,6 +174,49 @@ export struct ReminderDetailPage {
       .width('100%')
       .height('100%')
       .backgroundColor(Theme.bg(this.uiMode))
+
+        if (this.showDoodle) {
+          DoodleSheet({
+            paper: this.paper,
+            initial: DoodleStore.get(this.card.id),
+            title: this.displayCard().content,
+            timeText: this.displayCard().isLocationOnly() ? '到达时' : this.displayCard().timeText(),
+            placeText: this.displayCard().hasLocation() ? this.displayCard().locationText() : '',
+            featured: this.isFeatured(),
+            reminderId: this.card.id,
+            // 和今日页共用同一份排版，否则这里看到的是默认排版、改完也回不到今日页
+            initialLayout: NoteLayoutStore.data(this.card.id),
+            onSave: (data: string) => {
+              DoodleStore.save(getContext(this), this.card.id, data);
+              const v: number = AppStorage.get<number>('doodleVersion') ?? 1;
+              AppStorage.setOrCreate<number>('doodleVersion', v + 1);
+              this.showDoodle = false;
+            },
+            onSaveLayout: (layout: string) => {
+              NoteLayoutStore.save(getContext(this), this.card.id, parseLayout(layout));
+            },
+            onClose: () => {
+              this.showDoodle = false;
+            }
+          })
+        }
+
+        if (this.showPaperPicker) {
+          PaperPickerSheet({
+            current: this.paper,
+            onPick: (paper: string) => {
+              this.paper = paper;
+              this.showPaperPicker = false;
+              PaperStore.setPaper(getContext(this), this.card.id, paper);
+            },
+            onClose: () => {
+              this.showPaperPicker = false;
+            }
+          })
+        }
+      }
+      .width('100%')
+      .height('100%')
     }
     .hideTitleBar(true)
     .backgroundColor(Theme.bg(this.uiMode))
@@ -159,7 +233,7 @@ export struct ReminderDetailPage {
         Column()
           .width(3)
           .height(14)
-          .backgroundColor(Theme.accent(this.uiMode))
+          .backgroundColor(Theme.ink(this.uiMode))
         Text(this.displayCard().isLocationOnly() ? '地点便笺' : '事项详情')
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
@@ -241,7 +315,7 @@ export struct ReminderDetailPage {
         Text(value)
           .fontSize(StyleConstants.FONT_BODY_SM)
           .fontWeight(FontWeight.Bold)
-          .fontColor(Theme.accent(this.uiMode))
+          .fontColor(Theme.ink(this.uiMode))
           .decoration({ type: TextDecorationType.Underline })
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -310,6 +384,77 @@ export struct ReminderDetailPage {
       this.MetaDivider()
       this.MetaRow('地点', this.displayCard().locationText(), this.displayCard().hasLocation())
       this.MetaDivider()
+      if (this.uiMode === UiMode.JOURNAL) {
+        Row() {
+          Text('纸张')
+            .fontSize(StyleConstants.FONT_SECTION_INDEX)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.sub(this.uiMode))
+            .letterSpacing(1)
+            .width(52)
+          Text(PaperStyle.label(this.paper))
+            .fontSize(StyleConstants.FONT_BODY)
+            .fontColor(Theme.text(this.uiMode))
+            .layoutWeight(1)
+          Text('更换 ›')
+            .fontSize(11)
+            .fontColor(Theme.ink(this.uiMode))
+        }
+        .width('100%')
+        .padding({ top: StyleConstants.SPACE_SM, bottom: StyleConstants.SPACE_SM })
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.showPaperPicker = true;
+        })
+        this.MetaDivider()
+
+        Row() {
+          Text('涂鸦')
+            .fontSize(StyleConstants.FONT_SECTION_INDEX)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.sub(this.uiMode))
+            .letterSpacing(1)
+            .width(52)
+          Text(DoodleStore.get(this.card.id) === '' ? '还没有笔迹' : '已有笔迹')
+            .fontSize(StyleConstants.FONT_BODY)
+            .fontColor(Theme.text(this.uiMode))
+            .layoutWeight(1)
+          Text('去画 ›')
+            .fontSize(11)
+            .fontColor(Theme.ink(this.uiMode))
+        }
+        .width('100%')
+        .padding({ top: StyleConstants.SPACE_SM, bottom: StyleConstants.SPACE_SM })
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.showDoodle = true;
+        })
+        this.MetaDivider()
+
+        Row() {
+          Text('文字')
+            .fontSize(StyleConstants.FONT_SECTION_INDEX)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.sub(this.uiMode))
+            .letterSpacing(1)
+            .width(52)
+          Text(this.textHidden ? '已隐藏，留白手写' : '显示中')
+            .fontSize(StyleConstants.FONT_BODY)
+            .fontColor(Theme.text(this.uiMode))
+            .layoutWeight(1)
+          Text(this.textHidden ? '显示 ›' : '隐藏 ›')
+            .fontSize(11)
+            .fontColor(Theme.ink(this.uiMode))
+        }
+        .width('100%')
+        .padding({ top: StyleConstants.SPACE_SM, bottom: StyleConstants.SPACE_SM })
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.textHidden = !this.textHidden;
+          PaperStore.setTextHidden(getContext(this), this.card.id, this.textHidden);
+        })
+        this.MetaDivider()
+      }
     }
     .width('100%')
     .margin({ top: StyleConstants.SPACE_LG })
@@ -321,7 +466,7 @@ export struct ReminderDetailPage {
       Text('编辑批注')
         .fontSize(StyleConstants.FONT_SECTION_INDEX)
         .fontWeight(FontWeight.Bold)
-        .fontColor(Theme.accent(this.uiMode))
+        .fontColor(Theme.ink(this.uiMode))
         .letterSpacing(2)
       Text('AI 辅助与情境建议将在这里以批注形式出现')
         .fontSize(StyleConstants.FONT_BODY_SM)
@@ -337,6 +482,23 @@ export struct ReminderDetailPage {
       color: $r('app.color.detail_ink'),
       style: BorderStyle.Dashed
     })
+  }
+
+  private confirmDelete(): void {
+    this.getUIContext().getPromptAction().showDialog({
+      title: '删除提醒',
+      message: '删除后不可恢复，确定删除吗？',
+      buttons: [
+        { text: '取消', color: $r('app.color.text_secondary') },
+        { text: '删除', color: $r('app.color.detail_ink') }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        UiReminderStore.remove(this.card.id);
+        this.pathStack.pop();
+      }
+    }).catch(() => {
+    });
   }
 
   @Builder
@@ -380,6 +542,18 @@ export struct ReminderDetailPage {
       }
       .width('100%')
       .justifyContent(FlexAlign.Center)
+
+      Text('删除此提醒')
+        .fontSize(StyleConstants.FONT_BODY_SM)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(Theme.sub(this.uiMode))
+        .decoration({ type: TextDecorationType.Underline })
+        .height(StyleConstants.TOUCH_TARGET_MIN)
+        .padding({ left: StyleConstants.SPACE_LG, right: StyleConstants.SPACE_LG })
+        .textAlign(TextAlign.Center)
+        .onClick(() => {
+          this.confirmDelete();
+        })
 
       Text('修改会保存在本次演示的临时数据中')
         .fontSize(StyleConstants.FONT_CAPTION)

@@ -151,8 +151,9 @@ export struct ReminderCard {
   variant: string = ReminderCardVariant.HERO;
   role: string = '';
   isNext: boolean = false;
-  indexLabel: string = '';
-  entryNo: string = '';
+  // 用 @Prop：切换极简/手账时要能把编号清空，普通成员只在创建时赋值
+  @Prop indexLabel: string = '';
+  @Prop entryNo: string = '';
   dateLabel: string = '';
   onCardClick: () => void = () => {};
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
@@ -181,11 +182,13 @@ export struct ReminderCard {
   LeadStory() {
     Column({ space: 9 }) {
       Row({ space: StyleConstants.SPACE_SM }) {
-        Text(this.indexLabel)
-          .fontSize(11)
-          .fontWeight(900)
-          .fontColor($r('app.color.ink_on_paper'))
-          .letterSpacing(0.8)
+        if (this.uiMode === UiMode.JOURNAL && this.indexLabel !== '') {
+          Text(this.indexLabel)
+            .fontSize(11)
+            .fontWeight(900)
+            .fontColor($r('app.color.ink_on_paper'))
+            .letterSpacing(0.8)
+        }
         if (this.dateLabel !== '') {
           Text(this.dateLabel)
             .fontSize(11)
@@ -246,19 +249,21 @@ export struct ReminderCard {
   @Builder
   EditorialRow() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      // 编号是页边索引，给时间和正文让出视觉重量。
-      Column() {
-        Text(this.entryNo)
-          .fontSize(StyleConstants.FONT_BODY_SM)
-          .fontWeight(900)
-          .fontColor(Theme.ink(this.uiMode))
-          .letterSpacing(1)
+      // 编号是页边索引，给时间和正文让出视觉重量；极简模式没有编号这一栏
+      if (this.uiMode === UiMode.JOURNAL) {
+        Column() {
+          Text(this.entryNo)
+            .fontSize(StyleConstants.FONT_BODY_SM)
+            .fontWeight(900)
+            .fontColor(Theme.ink(this.uiMode))
+            .letterSpacing(1)
+        }
+        .width(26)
+        .height(44)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .border({ width: { bottom: 1 }, color: $r('app.color.accent_sky') })
       }
-      .width(26)
-      .height(44)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .border({ width: { bottom: 1 }, color: $r('app.color.accent_sky') })
 
       Column({ space: StyleConstants.SPACE_XS }) {
         Row({ space: StyleConstants.SPACE_SM }) {

@@ -6,6 +6,15 @@ import { OtterSlot, OtterState } from './OtterSlot';
 import { EmptyState } from './EmptyState';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
+import { PaperStyle } from '../common/PaperStyle';
+import { PaperStore } from '../common/PaperStore';
+import { DraftStore } from '../common/DraftStore';
+import { DoodleStore } from '../common/DoodleStore';
+import { DoodleView } from './DoodleView';
+import { NoteLayoutView } from './NoteLayoutView';
+import { NoteLayoutStore } from '../common/NoteLayoutStore';
+import { parseLayout } from '../common/NoteLayoutModel';
+import { DoodleSheet } from './DoodleSheet';
 
 const VIEW_ARCHIVE: string = 'archive';
 const VIEW_TIMELINE: string = 'timeline';
@@ -72,6 +81,19 @@ export struct TodayDashboard {
   // 版本号变化 → 重渲染 → 通过方法读取最新数据
   @StorageLink('uiReminderVersion') storeVersion: number = 0;
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
+  @StorageLink('paperVersion') paperVersion: number = 1;
+  @StorageLink('draftVersion') draftVersion: number = 1;
+  @StorageLink('doodleVersion') doodleVersion: number = 1;
+  @StorageLink('layoutVersion') layoutVersion: number = 1;
+  @State doodleItemId: string = '';
+  @State doodlePaper: string = '';
+  @State showDoodle: boolean = false;
+  @State doodleTitle: string = '';
+  @State doodleTime: string = '';
+  @State doodlePlace: string = '';
+  @State doodleFeatured: boolean = false;
+  /** 长按后紧跟着的点击要忽略，否则会跳进详情页 */
+  private longPressAt: number = 0;
 
   /** 首页按真实时间排序：修改时间后条目位置会随之改变。 */
   private activeItems(): ReminderCardData[] {
@@ -83,6 +105,11 @@ export struct TodayDashboard {
   }
 
   aboutToAppear(): void {
+    const active: ReminderCardData[] = this.activeItems();
+    for (let i = 0; i < active.length; i++) {
+      DoodleStore.load(getContext(this), active[i].id);
+      NoteLayoutStore.load(getContext(this), active[i].id);
+    }
     const now: Date = new Date();
     const weekdays: string[] = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     const month: number = now.getMonth() + 1;
@@ -139,30 +166,59 @@ export struct TodayDashboard {
   }
 
   build() {
-    Scroll() {
-      Column() {
-        this.MastheadBlock()
-        if (this.viewMode === VIEW_ARCHIVE) {
-          this.ArchiveBlock()
-          this.SealedBlock()
-        } else {
-          this.TimelineBlock()
+    Stack({ alignContent: Alignment.Bottom }) {
+      Scroll() {
+        Column() {
+          this.MastheadBlock()
+          if (this.viewMode === VIEW_ARCHIVE) {
+            this.ArchiveBlock()
+            this.SealedBlock()
+          } else {
+            this.TimelineBlock()
+          }
+          this.NewEntryBlock()
         }
-        this.NewEntryBlock()
+        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .padding({
+          left: StyleConstants.PAGE_PADDING_H,
+          right: StyleConstants.PAGE_PADDING_H,
+          top: StyleConstants.SPACE_LG,
+          bottom: StyleConstants.SPACE_XXXL
+        })
       }
-      .alignItems(HorizontalAlign.Start)
+      .scrollBar(BarState.Off)
       .width('100%')
-      .padding({
-        left: StyleConstants.PAGE_PADDING_H,
-        right: StyleConstants.PAGE_PADDING_H,
-        top: StyleConstants.SPACE_LG,
-        bottom: StyleConstants.SPACE_XXXL
-      })
+      .height('100%')
+      .backgroundColor(Theme.bg(this.uiMode))
+
+      if (this.showDoodle) {
+        DoodleSheet({
+          paper: this.doodlePaper,
+          initial: DoodleStore.get(this.doodleItemId),
+          title: this.doodleTitle,
+          timeText: this.doodleTime,
+          placeText: this.doodlePlace,
+          featured: this.doodleFeatured,
+          reminderId: this.doodleItemId,
+          initialLayout: NoteLayoutStore.data(this.doodleItemId),
+          onSave: (data: string) => {
+            DoodleStore.save(getContext(this), this.doodleItemId, data);
+            const v: number = AppStorage.get<number>('doodleVersion') ?? 1;
+            AppStorage.setOrCreate<number>('doodleVersion', v + 1);
+            this.showDoodle = false;
+          },
+          onSaveLayout: (layout: string) => {
+            NoteLayoutStore.save(getContext(this), this.doodleItemId, parseLayout(layout));
+          },
+          onClose: () => {
+            this.showDoodle = false;
+          }
+        })
+      }
     }
-    .scrollBar(BarState.Off)
     .width('100%')
     .height('100%')
-    .backgroundColor(Theme.bg(this.uiMode))
   }
 
   @Builder
@@ -293,6 +349,13 @@ export struct TodayDashboard {
           .fontWeight(FontWeight.Bold)
           .fontColor(Theme.sub(this.uiMode))
           .maxLines(1)
+        if (this.uiMode === UiMode.JOURNAL) {
+          Text('· 长按便签可涂鸦')
+            .fontSize(10)
+            .fontColor(Theme.sub(this.uiMode))
+            .opacity(0.75)
+            .maxLines(1)
+        }
         Blank()
         this.ViewToggle()
       }
@@ -353,8 +416,9 @@ export struct TodayDashboard {
       data: item,
       role: resolveSlipRole(item, index),
       isNext: index === 0,
-      indexLabel: `第 ${this.noShort(index)} 则`,
-      entryNo: this.noShort(index),
+      // 极简模式不要 01/02 这类编号，手账保留报纸式序号
+      indexLabel: this.uiMode === UiMode.JOURNAL ? `第 ${this.noShort(index)} 则` : '',
+      entryNo: this.uiMode === UiMode.JOURNAL ? this.noShort(index) : '',
       onCardClick: () => {
         this.goDetail(item);
       }
@@ -429,12 +493,82 @@ export struct TodayDashboard {
           if (index > 0) {
             this.GapRow(index - 1, index)
           }
-          if (index === 0) {
+          if (this.uiMode === UiMode.JOURNAL) {
+            // 手账模式：每条事项就是一张便签；长按进入涂鸦
+            Stack({ alignContent: Alignment.TopStart }) {
+              if (DoodleStore.get(item.id) !== '') {
+                DoodleView({ data: DoodleStore.get(item.id) })
+                  .width('100%')
+                  .height('100%')
+              }
+              Column() {
+                if (PaperStore.isTextHidden(item.id)) {
+                // 隐藏系统文字：只留一个小时间标记，其余留白给用户手写/涂鸦
+                // 只留时间，但整块依然可点：点进去就能看到内容/取消隐藏
+                Row() {
+                  Text(item.timeText())
+                    .fontFamily('serif')
+                    .fontSize(11)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(Theme.sub(this.uiMode))
+                  Blank()
+                  Text('…')
+                    .fontSize(12)
+                    .fontColor(Theme.sub(this.uiMode))
+                    .opacity(0.6)
+                }
+                .width('100%')
+                .padding({ left: 4, top: 2, right: 2 })
+                .onClick(() => this.goDetail(item))
+                } else {
+                  NoteLayoutView({
+                    layoutData: NoteLayoutStore.data(item.id),
+                    time: item.isLocationOnly() ? '到达时' : item.timeText(),
+                    title: item.content,
+                    place: item.hasLocation() ? item.locationText() : '',
+                    featured: index === 0,
+                    editable: false
+                  })
+                  .width('100%')
+                  .height(180)
+                  .clip(true)
+                }
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Start)
+            }
+            .width('104%')
+            .height(214)
+            .padding({ left: 18, right: 16, top: 14, bottom: 18 })
+            .backgroundImage(PaperStyle.resource(PaperStore.paperOf(item.id)))
+            .backgroundImageSize({ width: '100%', height: '100%' })
+            .rotate({ angle: index % 2 === 0 ? -0.8 : 0.7 })
+            .offset({ x: index % 2 === 0 ? 0 : -4 })
+            .onClick(() => {
+              // 便签本身可点：进详情（长按刚结束时这次点击会被 goDetail 吞掉）
+              this.goDetail(item);
+            })
+            .parallelGesture(
+              LongPressGesture()
+                .onAction(() => {
+                  this.longPressAt = Date.now();
+                  this.doodleItemId = item.id;
+                  this.doodlePaper = PaperStore.paperOf(item.id);
+                  this.doodleTitle = item.content;
+                  this.doodleTime = item.isLocationOnly() ? '到达时' : item.timeText();
+                  this.doodlePlace = item.hasLocation() ? item.locationText() : '';
+                  this.doodleFeatured = index === 0;
+                  this.showDoodle = true;
+                })
+            )
+          } else if (index === 0) {
             this.CurrentEntry(item, index)
           } else {
             this.SlipRow(item, index)
           }
-        }, (item: ReminderCardData) => `${this.storeVersion}-${item.renderKey()}`)
+        }, (item: ReminderCardData) => `${this.storeVersion}-${this.paperVersion}-${item.renderKey()}` +
+            `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
+            `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
       }
     }
     .width('100%')
@@ -471,7 +605,9 @@ export struct TodayDashboard {
               this.goDetail(item);
             }
           })
-        }, (item: ReminderCardData) => `${this.storeVersion}-${item.renderKey()}`)
+        }, (item: ReminderCardData) => `${this.storeVersion}-${this.paperVersion}-${item.renderKey()}` +
+            `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
+            `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
       }
       .width('100%')
       .margin({ top: StyleConstants.SPACE_XL })
@@ -662,7 +798,9 @@ export struct TodayDashboard {
             this.TimelineGapRow(index - 1, index)
           }
           this.TimelineNode(item)
-        }, (item: ReminderCardData) => `${this.storeVersion}-${item.renderKey()}`)
+        }, (item: ReminderCardData) => `${this.storeVersion}-${this.paperVersion}-${item.renderKey()}` +
+            `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
+            `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
       }
 
       if (this.untimedItems().length > 0) {
@@ -690,7 +828,9 @@ export struct TodayDashboard {
 
           ForEach(this.untimedItems(), (item: ReminderCardData) => {
             this.UntimedNode(item)
-          }, (item: ReminderCardData) => `${this.storeVersion}-${item.renderKey()}`)
+          }, (item: ReminderCardData) => `${this.storeVersion}-${this.paperVersion}-${item.renderKey()}` +
+            `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
+            `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
@@ -701,28 +841,108 @@ export struct TodayDashboard {
 
   @Builder
   NewEntryBlock() {
-    Row({ space: StyleConstants.SPACE_MD }) {
-      Text('＋ 新建提醒')
-        .fontSize(15)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.archive_ink'))
-        .padding({ left: 14, right: 14 })
-        .height(46)
-        .backgroundImage(this.uiMode === UiMode.JOURNAL ? $r('app.media.ticket_salt') : undefined)
-        .backgroundImageSize({ width: '100%', height: '100%' })
-        .onClick(() => {
-          this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
-            new ReminderEditNavParam(RouterConstants.EDIT_MODE_CREATE));
-        })
+    Column({ space: 8 }) {
+      // 第一行：新建提醒（右对齐）
+      Row() {
+        Blank()
+        Text('＋ 新建提醒')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.archive_ink'))
+          .padding({ left: 14, right: 14 })
+          .height(46)
+          .backgroundImage(this.uiMode === UiMode.JOURNAL ? $r('app.media.ticket_salt') : undefined)
+          .backgroundImageSize({ width: '100%', height: '100%' })
+          .onClick(() => {
+            this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
+              new ReminderEditNavParam(RouterConstants.EDIT_MODE_CREATE));
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
+
+      // 第二行：草稿箱，同样右对齐
+      Row() {
+        Blank()
+        if (this.uiMode === UiMode.JOURNAL) {
+          Column({ space: 1 }) {
+            Text('草稿箱')
+              .fontSize(9)
+              .fontColor($r('app.color.archive_ink'))
+              .opacity(0.75)
+            Text(`${this.draftCount()}`)
+              .fontSize(17)
+              .fontWeight(900)
+              .fontColor($r('app.color.archive_ink'))
+          }
+          .width(64)
+          .padding({ top: 5, bottom: 5 })
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+          .backgroundImage($r('app.media.ticket_amber'))
+          .backgroundImageSize({ width: '100%', height: '100%' })
+          .rotate({ angle: 2 })
+          .onClick(() => {
+            this.pathStack.pushPathByName(RouterConstants.PAGE_DRAFT_LIST, '');
+          })
+        } else {
+          Row({ space: 6 }) {
+            // 线条信封：一个描边矩形 + 一道封口折线，比文字行高略小一点，不抢视线
+            Stack({ alignContent: Alignment.TopStart }) {
+              Column()
+                .width(20)
+                .height(14)
+                .border({ width: 1.1, color: $r('app.color.archive_ink') })
+              Shape() {
+                Path()
+                  .commands('M0.9 0.9 L10 7.2 L19.1 0.9')
+              }
+              .width(20)
+              .height(14)
+              .strokeWidth(1.1)
+              .stroke($r('app.color.archive_ink'))
+              .fill(Color.Transparent)
+            }
+            .width(20)
+            .height(14)
+
+            Text(DraftStore.count() > 0 ? `草稿箱 ${this.draftCount()}` : '草稿箱')
+              .fontSize(15)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.archive_ink'))
+              .maxLines(1)
+          }
+          .height(44)
+          .padding({ left: 4, right: 4 })
+          .alignItems(VerticalAlign.Center)
+          .onClick(() => {
+            this.pathStack.pushPathByName(RouterConstants.PAGE_DRAFT_LIST, '');
+          })
+        }
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
     }
     .width('100%')
-    .justifyContent(FlexAlign.End)
+    .alignItems(HorizontalAlign.End)
     .padding({ top: 12 })
     .margin({ top: StyleConstants.SPACE_SECTION })
     .border({ width: { top: 1 }, color: $r('app.color.border_subtle') })
   }
 
+  /** 草稿数：读一次 draftVersion 建立刷新依赖，存/删草稿后这里才会重新求值 */
+  private draftCount(): number {
+    if (this.draftVersion < 0) {
+      return 0;
+    }
+    return DraftStore.count();
+  }
+
   goDetail(item: ReminderCardData): void {
+    // 长按刚结束时，子组件还会补发一次点击——这里吞掉，避免误跳详情
+    if (Date.now() - this.longPressAt < 900) {
+      return;
+    }
     this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_DETAIL, new ReminderDetailNavParam(item));
   }
 }

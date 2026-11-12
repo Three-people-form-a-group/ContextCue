@@ -1,12 +1,15 @@
 import { StyleConstants } from '../common/StyleConstants';
 import { RouterConstants } from '../common/RouterConstants';
 import { UiMode } from '../common/UiMode';
+import { PaperStore } from '../common/PaperStore';
+import { DraftStore } from '../common/DraftStore';
 import { Theme } from '../common/Theme';
 import { TodayDashboard } from '../components/TodayDashboard';
 import { ReminderListPage } from './ReminderListPage';
 import { SettingsPage } from './SettingsPage';
 import { ReminderDetailPage } from './ReminderDetailPage';
 import { ReminderEditPage } from './ReminderEditPage';
+import { DraftListPage } from './DraftListPage';
 
 /**
  * 应用唯一 @Entry 根页面：
@@ -28,6 +31,8 @@ struct Index {
   aboutToAppear(): void {
     // 读回上次选择的界面模式（极简 / 手账）
     UiMode.init(getContext(this));
+    PaperStore.init(getContext(this));
+    DraftStore.init(getContext(this));
   }
 
   /**
@@ -68,6 +73,8 @@ struct Index {
       ReminderDetailPage({ pathStack: this.pathStack })
     } else if (name === RouterConstants.PAGE_REMINDER_EDIT) {
       ReminderEditPage({ pathStack: this.pathStack })
+    } else if (name === RouterConstants.PAGE_DRAFT_LIST) {
+      DraftListPage({ pathStack: this.pathStack })
     } else if (name === RouterConstants.PAGE_SETTINGS) {
       NavDestination() {
         SettingsPage({ pathStack: this.pathStack })

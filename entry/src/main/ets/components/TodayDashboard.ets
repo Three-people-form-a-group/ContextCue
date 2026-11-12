@@ -77,6 +77,10 @@ export struct TodayDashboard {
   pathStack: NavPathStack = new NavPathStack();
   @State todayDateLabel: string = '';
   @State todayWeekday: string = '';
+  /** 今天 0 点的毫秒值；跨 0 点会更新，今日筛选随之重算 */
+  @State todayStartMs: number = 0;
+  private dayTimer: number = -1;
+  private todayKey: string = '';
   @State viewMode: string = VIEW_ARCHIVE;
   // 版本号变化 → 重渲染 → 通过方法读取最新数据
   @StorageLink('uiReminderVersion') storeVersion: number = 0;
@@ -95,9 +99,25 @@ export struct TodayDashboard {
   /** 长按后紧跟着的点击要忽略，否则会跳进详情页 */
   private longPressAt: number = 0;
 
-  /** 首页按真实时间排序：修改时间后条目位置会随之改变。 */
+  /**
+   * 今日只显示「今天」的提醒 + 没有时间的纯地点提醒。
+   * 昨天及更早未完成的（逾期）归到日程页的逾期区，跨 0 点自动换日。
+   */
   private activeItems(): ReminderCardData[] {
-    return UiReminderStore.sortedActive();
+    const all: ReminderCardData[] = UiReminderStore.sortedActive();
+    const start: number = this.todayStartMs;
+    if (start <= 0) {
+      return all;
+    }
+    const end: number = start + 24 * 3600 * 1000;
+    const out: ReminderCardData[] = [];
+    for (let i = 0; i < all.length; i++) {
+      const t: number | undefined = all[i].triggerTime;
+      if (t === undefined || (t >= start && t < end)) {
+        out.push(all[i]);
+      }
+    }
+    return out;
   }
 
   private doneItems(): ReminderCardData[] {
@@ -105,17 +125,36 @@ export struct TodayDashboard {
   }
 
   aboutToAppear(): void {
+    this.refreshToday();
     const active: ReminderCardData[] = this.activeItems();
     for (let i = 0; i < active.length; i++) {
       DoodleStore.load(getContext(this), active[i].id);
       NoteLayoutStore.load(getContext(this), active[i].id);
     }
+    // 每分钟看一眼日期：跨 0 点后重新计算标题与今日列表
+    this.dayTimer = setInterval(() => {
+      this.refreshToday();
+    }, 60000);
+  }
+
+  aboutToDisappear(): void {
+    if (this.dayTimer >= 0) {
+      clearInterval(this.dayTimer);
+      this.dayTimer = -1;
+    }
+  }
+
+  private refreshToday(): void {
     const now: Date = new Date();
+    const key: string = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+    if (key === this.todayKey) {
+      return;
+    }
+    this.todayKey = key;
     const weekdays: string[] = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-    const month: number = now.getMonth() + 1;
-    const day: number = now.getDate();
-    this.todayDateLabel = `${month} / ${day}`;
+    this.todayDateLabel = `${now.getMonth() + 1} / ${now.getDate()}`;
     this.todayWeekday = weekdays[now.getDay()];
+    this.todayStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   }
 
   private gapHeightAt(prevIndex: number, index: number): number {

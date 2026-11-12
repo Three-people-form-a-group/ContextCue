@@ -1,3 +1,4 @@
+import { promptAction } from '@kit.ArkUI';
 import { StyleConstants } from '../common/StyleConstants';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
@@ -217,6 +218,79 @@ export struct ReminderListPage {
     return timed.concat(untimed);
   }
 
+  /** 逾期 = 有触发时间、时间在今天 0 点之前、且未完成 */
+  private isOverdue(item: ReminderCardData): boolean {
+    const t: number | undefined = item.triggerTime;
+    if (t === undefined || item.isCompleted()) {
+      return false;
+    }
+    const now: Date = new Date();
+    const todayStart: number = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    return t < todayStart;
+  }
+
+  /** 逾期条目：不混进今天，单独成区；按时间从旧到新 */
+  private overdueItems(): ReminderCardData[] {
+    const all: ReminderCardData[] = this.allReminders();
+    const out: ReminderCardData[] = [];
+    for (let i = 0; i < all.length; i++) {
+      if (this.isOverdue(all[i])) {
+        out.push(all[i]);
+      }
+    }
+    out.sort((a: ReminderCardData, b: ReminderCardData) => {
+      const ta: number | undefined = a.triggerTime;
+      const tb: number | undefined = b.triggerTime;
+      return (ta === undefined ? 0 : ta) - (tb === undefined ? 0 : tb);
+    });
+    return out;
+  }
+
+  /** 逾期日期标签：昨天 / 前天 / 8/10 */
+  private overdueDayLabel(item: ReminderCardData): string {
+    const t: number | undefined = item.triggerTime;
+    if (t === undefined) {
+      return '';
+    }
+    const d: Date = new Date(t);
+    const now: Date = new Date();
+    const a: number = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const b: number = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const days: number = Math.round((a - b) / 86400000);
+    if (days === 1) {
+      return '昨天';
+    }
+    if (days === 2) {
+      return '前天';
+    }
+    return `${d.getMonth() + 1}/${d.getDate()}`;
+  }
+
+  private markDone(item: ReminderCardData): void {
+    UiReminderStore.complete(item.id);
+  }
+
+  private editOverdue(item: ReminderCardData): void {
+    this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
+      new ReminderEditNavParam(RouterConstants.EDIT_MODE_EDIT, item));
+  }
+
+  private confirmDeleteOverdue(item: ReminderCardData): void {
+    this.getUIContext().getPromptAction().showDialog({
+      title: '删除逾期提醒',
+      message: `「${item.content}」删除后不可恢复，确定删除吗？`,
+      buttons: [
+        { text: '取消', color: $r('app.color.text_secondary') },
+        { text: '删除', color: $r('app.color.detail_ink') }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        UiReminderStore.remove(item.id);
+      }
+    }).catch(() => {
+    });
+  }
+
   private sortedGroupItems(group: ReminderGroupData): ReminderCardData[] {
     const resolved: ReminderCardData[] = [];
     for (let i = 0; i < group.items.length; i++) {
@@ -269,6 +343,10 @@ export struct ReminderListPage {
     for (let i = 0; i < storeItems.length; i++) {
       const item: ReminderCardData = storeItems[i];
       if (known.indexOf(item.id) >= 0 || UiReminderStore.isDeleted(item.id)) {
+        continue;
+      }
+      // 逾期条目在上面的逾期区单独展示，不再落进「今天」
+      if (this.isOverdue(item)) {
         continue;
       }
       if (this.groupIndexOfDate(item.triggerTime) === groupIndex) {
@@ -572,9 +650,120 @@ export struct ReminderListPage {
     })
   }
 
+  /** 逾期区：单独成组、左侧强调条 + 强调色时间，行内可以直接处理 */
+  @Builder
+  OverdueBlock() {
+    Column({ space: 10 }) {
+      Row({ space: 8 }) {
+        Column()
+          .width(3)
+          .height(18)
+          .backgroundColor(Theme.alert(this.uiMode))
+        Text('逾期')
+          .fontSize(24)
+          .fontWeight(900)
+          .fontColor(Theme.alert(this.uiMode))
+        Blank()
+        Text(`${this.overdueItems().length} 条待处理`)
+          .fontSize(11)
+          .fontColor(Theme.sub(this.uiMode))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 4, right: 4, top: 18, bottom: 2 })
+
+      ForEach(this.overdueItems(), (item: ReminderCardData) => {
+        this.OverdueRow(item)
+      }, (item: ReminderCardData) => `od-${this.storeVersion}-${item.renderKey()}`)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  OverdueRow(item: ReminderCardData) {
+    Column({ space: 8 }) {
+      Row({ space: 12 }) {
+        Column({ space: 2 }) {
+          Text(this.overdueDayLabel(item))
+            .fontSize(11)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.alert(this.uiMode))
+          Text(item.timeText())
+            .fontFamily('serif')
+            .fontSize(15)
+            .fontWeight(900)
+            .fontColor(Theme.alert(this.uiMode))
+        }
+        .width(62)
+        .alignItems(HorizontalAlign.Start)
+
+        Column({ space: 3 }) {
+          Text(item.content)
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.text(this.uiMode))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+          if (item.hasLocation()) {
+            Text(this.placeLabel(item))
+              .fontSize(12)
+              .fontColor(Theme.sub(this.uiMode))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .onClick(() => {
+          this.goDetail(item);
+        })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+
+      Row({ space: 8 }) {
+        Blank()
+        this.OverdueAction('已完成', false, () => {
+          this.markDone(item);
+        })
+        this.OverdueAction('改时间', false, () => {
+          this.editOverdue(item);
+        })
+        this.OverdueAction('删除', true, () => {
+          this.confirmDeleteOverdue(item);
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 10, right: 4, top: 10, bottom: 8 })
+    .border({ width: { left: 3 }, color: Theme.alert(this.uiMode) })
+  }
+
+  @Builder
+  OverdueAction(label: string, danger: boolean, onTap: () => void) {
+    Text(label)
+      .fontSize(11)
+      .fontWeight(FontWeight.Bold)
+      .fontColor(danger ? Theme.alert(this.uiMode) : Theme.ink(this.uiMode))
+      .height(30)
+      .padding({ left: 10, right: 10 })
+      .textAlign(TextAlign.Center)
+      .border({ width: 1, color: danger ? Theme.alert(this.uiMode) : Theme.rule(this.uiMode) })
+      .borderRadius({ topLeft: 0, topRight: 7, bottomLeft: 0, bottomRight: 7 })
+      .onClick(() => {
+        onTap();
+      })
+  }
+
   @Builder
   GroupListBlock() {
     Column({ space: StyleConstants.SPACE_SECTION }) {
+      if (this.overdueItems().length > 0) {
+        this.OverdueBlock()
+      }
       ForEach(this.groups, (group: ReminderGroupData, groupIndex: number) => {
         Column() {
           this.GroupHeader(group, groupIndex)

@@ -1,5 +1,6 @@
 import { ReminderCardData } from '../components/ReminderCard';
 import { MockReminderData } from './MockReminderData';
+import { UiReminderStatus } from './UiReminderSemantics';
 
 /**
  * 临时 UI 数据源（过渡层，非团队公共业务层）。
@@ -97,6 +98,23 @@ export class UiReminderStore {
       UiReminderStore.deletedIds.push(id);
     }
     AppStorage.setOrCreate<number>(UiReminderStore.KEY_VERSION, UiReminderStore.getVersion() + 1);
+  }
+
+  /** 标记完成：从 active 移到 done（字段保持不变，只改状态） */
+  static complete(id: string): void {
+    for (let i = 0; i < UiReminderStore.active.length; i++) {
+      const item: ReminderCardData = UiReminderStore.active[i];
+      if (item.id !== id) {
+        continue;
+      }
+      UiReminderStore.active.splice(i, 1);
+      UiReminderStore.done.unshift(new ReminderCardData(
+        item.id, item.content, item.triggerType, item.source, UiReminderStatus.COMPLETED,
+        item.triggerTime, item.sceneId, item.sceneName, item.locationTriggerMode
+      ));
+      AppStorage.setOrCreate<number>(UiReminderStore.KEY_VERSION, UiReminderStore.getVersion() + 1);
+      return;
+    }
   }
 
   /** 用同 id 的记录替换；不存在则作为新建追加到 active。 */

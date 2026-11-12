@@ -37,6 +37,9 @@ export class ReminderGroupData {
 
 export class MockReminderData {
   static readonly TODAY_ACTIVE: ReminderCardData[] = [
+    // 逾期示例：昨日未完成，只在「日程」页的逾期区出现，不进今日
+    new ReminderCardData('overdue-1', '昨天的实验记录还没整理',
+      UiTriggerType.TIME, UiReminderSource.MANUAL, UiReminderStatus.ACTIVE, atDayOffset(-1, 18, 0)),
     new ReminderCardData('today-1', '团队周会：同步 ContextCue 开发进度',
       UiTriggerType.TIME, UiReminderSource.MANUAL, UiReminderStatus.ACTIVE, atHourToday(9, 30)),
     new ReminderCardData('today-2', '给 UI 评审准备导航骨架截图',

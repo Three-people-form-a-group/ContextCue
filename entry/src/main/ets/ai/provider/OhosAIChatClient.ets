@@ -10,22 +10,29 @@ import { AIProviderFailure } from './AIModelProvider';
  * 200 但响应体异常 → PROVIDER_ERROR 可重试。
  * 本类绝不输出 Authorization 头或 apiKey。
  */
+interface ChatMessage {
+  role: string;
+  content: string;
+}
+
 export class OhosAIChatClient implements AIChatClient {
   async chat(request: AIChatRequest): Promise<AIChatResult> {
     const client = http.createHttp();
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + request.apiKey
+      };
+      const messages: ChatMessage[] = [
+        { role: 'system', content: request.system },
+        { role: 'user', content: request.user }
+      ];
       const response = await client.request(request.url, {
         method: http.RequestMethod.POST,
-        header: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + request.apiKey
-        },
+        header: headers,
         extraData: JSON.stringify({
           model: request.model,
-          messages: [
-            { role: 'system', content: request.system },
-            { role: 'user', content: request.user }
-          ],
+          messages: messages,
           temperature: request.temperature
         }),
         connectTimeout: request.timeoutMs,

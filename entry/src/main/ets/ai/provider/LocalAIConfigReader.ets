@@ -23,7 +23,7 @@ export function readLocalAIProviderConfig(filesDir: string): AIProviderConfig | 
     const buf: ArrayBuffer = new ArrayBuffer(stat.size);
     fs.readSync(file.fd, buf);
     const decoder: util.TextDecoder = util.TextDecoder.create('utf-8');
-    const json: string = decoder.decodeWithBytes(new Uint8Array(buf));
+    const json: string = decoder.decodeToString(new Uint8Array(buf));
     const config = parseAIProviderConfig(json);
     if (config === undefined) {
       throw new Error('AI_CONFIG_INVALID');

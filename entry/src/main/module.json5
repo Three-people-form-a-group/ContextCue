@@ -13,7 +13,7 @@
     "requestPermissions": [
       {
         "name": "ohos.permission.APPROXIMATELY_LOCATION",
-        "reason": "用于基于用户当前位置触发地理围栏提醒",
+        "reason": "$string:permission_reason_location",
         "usedScene": {
           "abilities": [
             "EntryAbility"
@@ -23,7 +23,7 @@
       },
       {
         "name": "ohos.permission.LOCATION",
-        "reason": "用于基于用户当前位置触发地理围栏提醒",
+        "reason": "$string:permission_reason_location",
         "usedScene": {
           "abilities": [
             "EntryAbility"

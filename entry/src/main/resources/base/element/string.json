@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "label"
+    },
+    {
+      "name": "permission_reason_location",
+      "value": "用于基于用户当前位置触发地理围栏提醒"
     }
   ]
 }

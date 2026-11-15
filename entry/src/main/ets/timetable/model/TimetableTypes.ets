@@ -14,12 +14,43 @@ export interface CourseDraft {
   weeks: number[];
 }
 
+export interface ScheduleOverride {
+  /** 第几节（1 起） */
+  index: number;
+  /** "HH:mm" */
+  start: string;
+  end: string;
+}
+
+/**
+ * 学校作息（展示规则，不作为提醒事实源）。
+ * 课程时间仍然是提醒唯一依据；作息只决定课表页的行与留白带。
+ * 三态：undefined=沿用已存、null=清空、对象=替换。
+ */
+export interface TimetableSchedule {
+  /** 第一节开始 "HH:mm" */
+  firstStart: string;
+  /** 每节分钟数，1–720 */
+  duration: number;
+  /** 课间分钟数 */
+  breakMinutes: number;
+  lunchStart?: string;
+  lunchEnd?: string;
+  dinnerStart?: string;
+  dinnerEnd?: string;
+  overrides?: ScheduleOverride[];
+  /** 锁定节次：不参与批量平移 */
+  locked?: number[];
+}
+
 export interface TimetableDraft {
   semesterName: string;
   /** 锚点日期 "YYYY-MM-DD"，该日期属于 anchorWeek 周 */
   anchorDate: string;
   anchorWeek: number;
   courses: CourseDraft[];
+  /** undefined=沿用已存作息；null=清空；对象=替换 */
+  schedule?: TimetableSchedule | null;
 }
 
 export interface StoredCourse {
@@ -39,6 +70,7 @@ export interface StoredTimetable {
   anchorDate: string;
   anchorWeek: number;
   courses: StoredCourse[];
+  schedule?: TimetableSchedule | null;
 }
 
 /** 一次"某课程某周"的上课实例与已创建提醒的对应关系（去重与级联删除的依据） */

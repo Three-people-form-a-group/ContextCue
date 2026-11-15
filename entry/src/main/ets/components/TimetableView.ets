@@ -1,6 +1,9 @@
 import { promptAction } from '@kit.ArkUI';
 import { StyleConstants } from '../common/StyleConstants';
-import { TimetableCourse, PeriodRow, derivePeriods } from '../common/TimetableCourse';
+import { TimetableCourse, PeriodRow, derivePeriods, minutesOfHm, hmText } from '../common/TimetableCourse';
+import { ScheduleModel } from '../common/ScheduleModel';
+import { ScheduleCalibratorSheet } from './ScheduleCalibratorSheet';
+import { TimetableSchedule } from '../timetable/model/TimetableTypes';
 import { getAppServices } from '../app/AppServiceRegistry';
 import { CourseDraft, TimetableDraft } from '../timetable/model/TimetableTypes';
 import { RefreshSignal } from '../common/RefreshSignal';
@@ -64,6 +67,9 @@ export struct TimetableView {
   @State editCourse: TimetableCourse = new TimetableCourse('', '', '', '', 1, '00:00', '00:00', [], 0);
   @State editIsNew: boolean = true;
   @State showImport: boolean = false;
+  /** 自定义作息（展示规则）；没有则按课程时间推导行 */
+  @State scheduleModel: ScheduleModel | undefined = undefined;
+  @State showCalibrator: boolean = false;
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
 
   private scroller: Scroller = new Scroller();
@@ -97,6 +103,7 @@ export struct TimetableView {
       this.semesterName = result.data.semesterName;
       this.anchorDate = result.data.anchorDate;
       this.anchorWeek = result.data.anchorWeek;
+      this.scheduleModel = ScheduleModel.fromStored(result.data.schedule);
       this.loadError = '';
     } else {
       this.courses = [];
@@ -104,7 +111,7 @@ export struct TimetableView {
         this.loadError = result.error.message;
       }
     }
-    this.periodsList = derivePeriods(this.courses);
+    this.rebuildPeriods();
   }
 
   // ---------- 日期 ----------
@@ -198,6 +205,66 @@ export struct TimetableView {
 
   private periods(): PeriodRow[] {
     return this.periodsList;
+  }
+
+  /**
+   * 生成表格行：
+   *   有作息 → 用作息推算的节次；作息之外的课程（早于第一节或晚于最后一节）各补一行，
+   *             再按开始时间统一排序、重新编号；
+   *   没作息 → 直接由课程时间合并推导。
+   */
+  private rebuildPeriods(): void {
+    if (this.scheduleModel === undefined) {
+      this.periodsList = derivePeriods(this.courses);
+      return;
+    }
+    const base: PeriodRow[] = this.scheduleModel.periods();
+    const extras: number[][] = [];
+    for (let i = 0; i < this.courses.length; i++) {
+      const c: TimetableCourse = this.courses[i];
+      const start: number = minutesOfHm(c.startTime);
+      const end: number = minutesOfHm(c.endTime);
+      let inside: boolean = false;
+      for (let p = 0; p < base.length; p++) {
+        if (start >= base[p].startMinutes && start < base[p].endMinutes) {
+          inside = true;
+          break;
+        }
+      }
+      if (!inside && end > start) {
+        extras.push([start, end]);
+      }
+    }
+    extras.sort((a: number[], b: number[]) => a[0] - b[0]);
+    const mergedExtras: number[][] = [];
+    for (let i = 0; i < extras.length; i++) {
+      const iv: number[] = extras[i];
+      if (mergedExtras.length === 0) {
+        mergedExtras.push([iv[0], iv[1]]);
+        continue;
+      }
+      const last: number[] = mergedExtras[mergedExtras.length - 1];
+      if (iv[0] <= last[1]) {
+        if (iv[1] > last[1]) {
+          last[1] = iv[1];
+        }
+      } else {
+        mergedExtras.push([iv[0], iv[1]]);
+      }
+    }
+    const all: number[][] = [];
+    for (let i = 0; i < base.length; i++) {
+      all.push([base[i].startMinutes, base[i].endMinutes]);
+    }
+    for (let i = 0; i < mergedExtras.length; i++) {
+      all.push(mergedExtras[i]);
+    }
+    all.sort((a: number[], b: number[]) => a[0] - b[0]);
+    const rows: PeriodRow[] = [];
+    for (let i = 0; i < all.length; i++) {
+      rows.push(new PeriodRow(i + 1, all[i][0], all[i][1]));
+    }
+    this.periodsList = rows;
   }
 
   /** 休息带：真实课程数据里没有作息表，不再插入 */
@@ -576,6 +643,9 @@ export struct TimetableView {
       anchorWeek: this.anchorWeek > 0 ? this.anchorWeek : this.currentWeek,
       courses: courses.map((c: TimetableCourse) => c.toDraft())
     };
+    if (this.scheduleModel !== undefined) {
+      draft.schedule = this.scheduleModel.toStored();
+    }
     const result = await getAppServices().timetableService.saveTimetable(draft);
     if (!result.success) {
       this.getUIContext().getPromptAction().showToast({
@@ -607,6 +677,49 @@ export struct TimetableView {
       }
     }).catch(() => {
     });
+  }
+
+  /** 应用作息：先记下新的作息；勾了「同时平移」就按第一节的偏移整体移动课程 */
+  private async applySchedule(model: ScheduleModel, shiftCourses: boolean): Promise<void> {
+    this.showCalibrator = false;
+    const previous: ScheduleModel | undefined = this.scheduleModel;
+    this.scheduleModel = model;
+    let courses: TimetableCourse[] = this.courses;
+    if (shiftCourses && previous !== undefined) {
+      const delta: number = minutesOfHm(model.firstStart) - minutesOfHm(previous.firstStart);
+      if (delta !== 0) {
+        courses = this.shiftCourses(delta, model);
+      }
+    }
+    this.courses = courses;
+    this.rebuildPeriods();
+    await this.persist(courses);
+  }
+
+  /** 按分钟偏移移动课程；开始时间落在锁定节次的课程不动 */
+  private shiftCourses(delta: number, model: ScheduleModel): TimetableCourse[] {
+    const out: TimetableCourse[] = [];
+    for (let i = 0; i < this.courses.length; i++) {
+      const c: TimetableCourse = this.courses[i];
+      const idx: number = model.periodIndexAt(minutesOfHm(c.startTime));
+      if (idx > 0 && model.isLocked(idx)) {
+        out.push(c);
+        continue;
+      }
+      out.push(new TimetableCourse(c.id, c.name, c.teacher, c.location, c.dayOfWeek,
+        this.shiftClock(c.startTime, delta), this.shiftClock(c.endTime, delta), c.weeks, c.tone));
+    }
+    return out;
+  }
+
+  private shiftClock(text: string, delta: number): string {
+    const m: number = Math.max(0, Math.min(MAX_EDIT_MINUTES, minutesOfHm(text) + delta));
+    return hmText(m);
+  }
+
+  private calibratorInitial(): string {
+    const m: ScheduleModel = this.scheduleModel === undefined ? ScheduleModel.regular() : this.scheduleModel;
+    return JSON.stringify(m.toStored());
   }
 
   private async applyImported(draft: TimetableDraft): Promise<void> {
@@ -665,6 +778,18 @@ export struct TimetableView {
         })
       }
 
+      if (this.showCalibrator) {
+        ScheduleCalibratorSheet({
+          initial: this.calibratorInitial(),
+          onApply: (model: ScheduleModel, shiftCourses: boolean) => {
+            this.applySchedule(model, shiftCourses);
+          },
+          onClose: () => {
+            this.showCalibrator = false;
+          }
+        })
+      }
+
       if (this.showImport) {
         TimetableImportSheet({
           onApply: (draft: TimetableDraft) => {
@@ -698,7 +823,7 @@ export struct TimetableView {
       PanGesture({ direction: PanDirection.Horizontal, distance: 24 })
         .onActionEnd((event: GestureEvent) => {
           // 任何弹层打开时都不翻页，避免在表单上横滑把底下的课表换掉
-          if (this.showDetail || this.showEdit || this.showImport) {
+          if (this.showDetail || this.showEdit || this.showImport || this.showCalibrator) {
             return;
           }
           if (event.offsetX <= -48) {
@@ -791,6 +916,16 @@ export struct TimetableView {
               this.shiftWeek(1);
             })
           Blank()
+          Text('作息')
+            .fontSize(10)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.accent(this.uiMode))
+            .height(36)
+            .padding({ left: 5, right: 5 })
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              this.showCalibrator = true;
+            })
           Text('导入')
             .fontSize(10)
             .fontWeight(FontWeight.Bold)

@@ -3,11 +3,26 @@ import { StyleConstants } from '../common/StyleConstants';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
 import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '../common/RouterConstants';
-import { MockReminderData, ReminderGroupData } from '../common/MockReminderData';
-import { UiReminderStore } from '../common/UiReminderStore';
-import { ReminderCardData } from '../components/ReminderCard';
-import { UiTriggerType, UiLocationTriggerMode } from '../common/UiReminderSemantics';
 import { TimetableView } from '../components/TimetableView';
+import { Reminder } from '../model/Reminder';
+import { LocationTriggerMode, TriggerType } from '../model/ReminderEnums';
+import { getAppServices } from '../app/AppServiceRegistry';
+import { RefreshSignal } from '../common/RefreshSignal';
+import {
+  hasLocation,
+  isCompleted,
+  isPending,
+  reminderLocationText,
+  reminderRenderKey,
+  reminderStatusText,
+  reminderTimeText
+} from '../common/ReminderView';
+
+/** 按日期分组的标题定义（条目由服务查询结果现算） */
+interface GroupDef {
+  readonly overline: string;
+  readonly label: string;
+}
 
 /**
  * 日程页：列表内嵌月历，课表使用独立滚动区域。
@@ -19,10 +34,16 @@ import { TimetableView } from '../components/TimetableView';
 @Component
 export struct ReminderListPage {
   pathStack: NavPathStack = new NavPathStack();
-  groups: ReminderGroupData[] = MockReminderData.ALL_GROUPS;
-  // 编辑页保存后由 AppStorage 通知刷新；按 id 用最新记录替换分组里的旧对象
-  // 版本号变化 → 重渲染 → 从 UI 数据源读取最新记录
-  @StorageLink('uiReminderVersion') storeVersion: number = 0;
+  /** 三个按日期分组；条目由 ReminderService.findAll() 的结果现算 */
+  groups: GroupDef[] = [
+    { overline: 'TODAY', label: '今天' },
+    { overline: 'TOMORROW', label: '明天' },
+    { overline: 'LATER', label: '本周稍后' }
+  ];
+  // 提醒被创建/编辑/完成/删除后，重新查询服务
+  @StorageLink('ccDataVersion') @Watch('onDataChanged') dataVersion: number = 0;
+  @State items: Reminder[] = [];
+  @State loadError: string = '';
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
   /** 'index' 列表视图（含内嵌月历）/ 'timetable' 课表视图 */
   @State viewMode: string = 'index';
@@ -37,27 +58,42 @@ export struct ReminderListPage {
     const now: Date = new Date();
     this.calYear = now.getFullYear();
     this.calMonth = now.getMonth() + 1;
+    this.loadItems();
+  }
+
+  private async loadItems(): Promise<void> {
+    const result = await getAppServices().reminderService.findAll();
+    if (result.success && result.data !== undefined) {
+      this.items = result.data;
+      this.loadError = '';
+    } else {
+      this.loadError = result.error === undefined ? '读取提醒失败' : result.error.message;
+    }
+  }
+
+  onDataChanged(): void {
+    this.loadItems();
   }
 
 
   /** 左栏时间：纯地点提醒写"到达时"，时间+地点写"20:00 后" */
-  private timeLabel(item: ReminderCardData): string {
-    if (item.triggerType === UiTriggerType.LOCATION) {
+  private timeLabel(item: Reminder): string {
+    if (item.triggerType === TriggerType.LOCATION) {
       return '到达时';
     }
-    if (item.triggerType === UiTriggerType.BOTH) {
-      return `${item.timeText()} 后`;
+    if (item.triggerType === TriggerType.BOTH) {
+      return `${reminderTimeText(item)} 后`;
     }
-    return item.timeText();
+    return reminderTimeText(item);
   }
 
   /** 地点补充行：把"进入/离开"和提醒关系写清楚 */
-  private placeLabel(item: ReminderCardData): string {
-    if (!item.hasLocation()) {
+  private placeLabel(item: Reminder): string {
+    if (!hasLocation(item)) {
       return '';
     }
     const scene: string = item.sceneName === undefined || item.sceneName === '' ? '未设置地点' : item.sceneName;
-    const mode: string = item.locationTriggerMode === UiLocationTriggerMode.EXIT ? '离开时' : '到达时';
+    const mode: string = item.locationTriggerMode === LocationTriggerMode.EXIT ? '离开时' : '到达时';
     return `${scene}（${mode}提醒）`;
   }
 
@@ -81,36 +117,13 @@ export struct ReminderListPage {
     this.selectedDay = now.getDate();
   }
 
-  /** 所有提醒：Mock 分组 + 数据源里新增的条目，按 id 去重 */
-  private allReminders(): ReminderCardData[] {
-    const out: ReminderCardData[] = [];
-    const seen: string[] = [];
-    for (let g = 0; g < this.groups.length; g++) {
-      const group: ReminderGroupData = this.groups[g];
-      for (let i = 0; i < group.items.length; i++) {
-        const item: ReminderCardData = this.resolve(group.items[i]);
-        if (UiReminderStore.isDeleted(item.id)) {
-          continue;
-        }
-        if (seen.indexOf(item.id) < 0) {
-          seen.push(item.id);
-          out.push(item);
-        }
-      }
-    }
-    const store: ReminderCardData[] = UiReminderStore.getActive();
-    for (let i = 0; i < store.length; i++) {
-      if (seen.indexOf(store[i].id) < 0) {
-        seen.push(store[i].id);
-        out.push(store[i]);
-      }
-    }
-    return out;
+  private allReminders(): Reminder[] {
+    return this.items;
   }
 
-  private itemsOnDate(day: number): ReminderCardData[] {
-    const out: ReminderCardData[] = [];
-    const all: ReminderCardData[] = this.allReminders();
+  private itemsOnDate(day: number): Reminder[] {
+    const out: Reminder[] = [];
+    const all: Reminder[] = this.allReminders();
     for (let i = 0; i < all.length; i++) {
       const t: number | undefined = all[i].triggerTime;
       if (t === undefined) {
@@ -155,7 +168,7 @@ export struct ReminderListPage {
   }
 
   /** 条目自己的日期：M/D 周X */
-  private dateLabelOf(item: ReminderCardData): string {
+  private dateLabelOf(item: Reminder): string {
     const t: number | undefined = item.triggerTime;
     if (t === undefined) {
       return '';
@@ -186,29 +199,19 @@ export struct ReminderListPage {
     this.selectedDay = 0;
   }
 
-  private resolve(item: ReminderCardData): ReminderCardData {
-    const list: ReminderCardData[] = UiReminderStore.getActive();
-    for (let i = 0; i < list.length; i++) {
-      if (list[i].id === item.id) {
-        return list[i];
-      }
-    }
-    return item;
-  }
-
   /** 按真实时间排序；无时间的条目排在末尾。 */
-  private sortItems(items: ReminderCardData[]): ReminderCardData[] {
-    const timed: ReminderCardData[] = [];
-    const untimed: ReminderCardData[] = [];
+  private sortItems(items: Reminder[]): Reminder[] {
+    const timed: Reminder[] = [];
+    const untimed: Reminder[] = [];
     for (let i = 0; i < items.length; i++) {
-      const item: ReminderCardData = items[i];
+      const item: Reminder = items[i];
       if (item.triggerTime === undefined) {
         untimed.push(item);
       } else {
         timed.push(item);
       }
     }
-    timed.sort((a: ReminderCardData, b: ReminderCardData) => {
+    timed.sort((a: Reminder, b: Reminder) => {
       const ta: number | undefined = a.triggerTime;
       const tb: number | undefined = b.triggerTime;
       const va: number = ta === undefined ? 0 : ta;
@@ -219,9 +222,9 @@ export struct ReminderListPage {
   }
 
   /** 逾期 = 有触发时间、时间在今天 0 点之前、且未完成 */
-  private isOverdue(item: ReminderCardData): boolean {
+  private isOverdue(item: Reminder): boolean {
     const t: number | undefined = item.triggerTime;
-    if (t === undefined || item.isCompleted()) {
+    if (t === undefined || isCompleted(item)) {
       return false;
     }
     const now: Date = new Date();
@@ -230,15 +233,15 @@ export struct ReminderListPage {
   }
 
   /** 逾期条目：不混进今天，单独成区；按时间从旧到新 */
-  private overdueItems(): ReminderCardData[] {
-    const all: ReminderCardData[] = this.allReminders();
-    const out: ReminderCardData[] = [];
+  private overdueItems(): Reminder[] {
+    const all: Reminder[] = this.allReminders();
+    const out: Reminder[] = [];
     for (let i = 0; i < all.length; i++) {
       if (this.isOverdue(all[i])) {
         out.push(all[i]);
       }
     }
-    out.sort((a: ReminderCardData, b: ReminderCardData) => {
+    out.sort((a: Reminder, b: Reminder) => {
       const ta: number | undefined = a.triggerTime;
       const tb: number | undefined = b.triggerTime;
       return (ta === undefined ? 0 : ta) - (tb === undefined ? 0 : tb);
@@ -247,7 +250,7 @@ export struct ReminderListPage {
   }
 
   /** 逾期日期标签：昨天 / 前天 / 8/10 */
-  private overdueDayLabel(item: ReminderCardData): string {
+  private overdueDayLabel(item: Reminder): string {
     const t: number | undefined = item.triggerTime;
     if (t === undefined) {
       return '';
@@ -266,16 +269,21 @@ export struct ReminderListPage {
     return `${d.getMonth() + 1}/${d.getDate()}`;
   }
 
-  private markDone(item: ReminderCardData): void {
-    UiReminderStore.complete(item.id);
+  private async markDone(item: Reminder): Promise<void> {
+    const result = await getAppServices().reminderService.complete(item.id);
+    if (!result.success) {
+      this.showActionError(result.error === undefined ? '标记完成失败' : result.error.message);
+      return;
+    }
+    RefreshSignal.bump();
   }
 
-  private editOverdue(item: ReminderCardData): void {
+  private editOverdue(item: Reminder): void {
     this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
-      new ReminderEditNavParam(RouterConstants.EDIT_MODE_EDIT, item));
+      new ReminderEditNavParam(RouterConstants.EDIT_MODE_EDIT, item.id));
   }
 
-  private confirmDeleteOverdue(item: ReminderCardData): void {
+  private confirmDeleteOverdue(item: Reminder): void {
     this.getUIContext().getPromptAction().showDialog({
       title: '删除逾期提醒',
       message: `「${item.content}」删除后不可恢复，确定删除吗？`,
@@ -285,21 +293,23 @@ export struct ReminderListPage {
       ]
     }).then((res: promptAction.ShowDialogSuccessResponse) => {
       if (res.index === 1) {
-        UiReminderStore.remove(item.id);
+        this.deleteReminder(item.id);
       }
     }).catch(() => {
     });
   }
 
-  private sortedGroupItems(group: ReminderGroupData): ReminderCardData[] {
-    const resolved: ReminderCardData[] = [];
-    for (let i = 0; i < group.items.length; i++) {
-      const item: ReminderCardData = this.resolve(group.items[i]);
-      if (!UiReminderStore.isDeleted(item.id)) {
-        resolved.push(item);
-      }
+  private async deleteReminder(id: string): Promise<void> {
+    const result = await getAppServices().reminderService.delete(id);
+    if (!result.success) {
+      this.showActionError(result.error === undefined ? '删除失败' : result.error.message);
+      return;
     }
-    return this.sortItems(resolved);
+    RefreshSignal.bump();
+  }
+
+  private showActionError(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: message });
   }
 
   /**
@@ -330,30 +340,19 @@ export struct ReminderListPage {
    * 实际渲染用的分组条目。
    * 数据源里不属于任何 Mock 分组的条目，按日期落到 今天 / 明天 / 本周稍后。
    */
-  private liveGroupItems(group: ReminderGroupData, groupIndex: number): ReminderCardData[] {
-    const base: ReminderCardData[] = this.sortedGroupItems(group);
-    const known: string[] = [];
-    for (let g = 0; g < this.groups.length; g++) {
-      for (let i = 0; i < this.groups[g].items.length; i++) {
-        known.push(this.groups[g].items[i].id);
-      }
-    }
-    const extra: ReminderCardData[] = [];
-    const storeItems: ReminderCardData[] = UiReminderStore.getActive();
-    for (let i = 0; i < storeItems.length; i++) {
-      const item: ReminderCardData = storeItems[i];
-      if (known.indexOf(item.id) >= 0 || UiReminderStore.isDeleted(item.id)) {
-        continue;
-      }
-      // 逾期条目在上面的逾期区单独展示，不再落进「今天」
-      if (this.isOverdue(item)) {
+  private liveGroupItems(groupIndex: number): Reminder[] {
+    const out: Reminder[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const item: Reminder = this.items[i];
+      // 只列待办；逾期条目在上面的逾期区单独展示，不再落进「今天」
+      if (!isPending(item) || this.isOverdue(item)) {
         continue;
       }
       if (this.groupIndexOfDate(item.triggerTime) === groupIndex) {
-        extra.push(item);
+        out.push(item);
       }
     }
-    return this.sortItems(base.concat(extra));
+    return this.sortItems(out);
   }
 
 
@@ -491,7 +490,7 @@ export struct ReminderListPage {
 
   /** 分组标题：衬线大编号 + 组名 + 条数，分隔线从编号右侧起、不到底。 */
   @Builder
-  GroupHeader(group: ReminderGroupData, groupIndex: number) {
+  GroupHeader(group: GroupDef, groupIndex: number) {
     Column() {
       Row({ space: 12 }) {
         // 手账：一天一组时，左侧一块日期牌（今天朱橙、明天暖灰），作为整页唯一的视觉焦点
@@ -533,7 +532,7 @@ export struct ReminderListPage {
                 })
                 .opacity(groupIndex > 1 ? 0.35 : 1)
             }
-            Text(group.groupLabel)
+            Text(group.label)
               .fontSize(24)
               .fontWeight(900)
               .fontColor(Theme.ink(this.uiMode))
@@ -546,7 +545,7 @@ export struct ReminderListPage {
                 .fontSize(11)
                 .fontColor(Theme.sub(this.uiMode))
             }
-            Text(`${this.liveGroupItems(group, groupIndex).length} 条`)
+            Text(`${this.liveGroupItems(groupIndex).length} 条`)
               .fontSize(11)
               .fontColor(Theme.sub(this.uiMode))
           }
@@ -567,7 +566,7 @@ export struct ReminderListPage {
    * 颜色只表示"下一项"——橙点 + 一行小字，避免颜色无意义地出现。
    */
   @Builder
-  ScheduleEntry(item: ReminderCardData, featured: boolean, showDate: boolean, index: number) {
+  ScheduleEntry(item: Reminder, featured: boolean, showDate: boolean, index: number) {
     Row({ space: StyleConstants.SPACE_MD }) {
       // 左：窄时间栏（固定 64vp，圆点槽固定 10vp，保证时间永远从同一位置起笔）
       Column({ space: 2 }) {
@@ -576,17 +575,17 @@ export struct ReminderListPage {
             .width(6)
             .height(6)
             .borderRadius(3)
-            .backgroundColor(featured && !item.isCompleted() ? Theme.alert(this.uiMode) : Color.Transparent)
+            .backgroundColor(featured && !isCompleted(item) ? Theme.alert(this.uiMode) : Color.Transparent)
           Text(this.timeLabel(item))
             .fontFamily('serif')
             .fontSize(15)
             .fontWeight(900)
-            .fontColor(item.isCompleted() ? Theme.sub(this.uiMode) : Theme.ink(this.uiMode))
+            .fontColor(isCompleted(item) ? Theme.sub(this.uiMode) : Theme.ink(this.uiMode))
             .maxLines(1)
         }
         .alignItems(VerticalAlign.Center)
 
-        if (featured && !item.isCompleted()) {
+        if (featured && !isCompleted(item)) {
           Text('下一项')
             .fontSize(9)
             .fontColor(Theme.alert(this.uiMode))
@@ -602,14 +601,14 @@ export struct ReminderListPage {
         Text(item.content)
           .fontSize(featured ? 19 : 16)
           .fontWeight(featured ? 900 : FontWeight.Bold)
-          .fontColor(item.isCompleted()
+          .fontColor(isCompleted(item)
             ? Theme.sub(this.uiMode)
             : Theme.text(this.uiMode))
-          .decoration({ type: item.isCompleted() ? TextDecorationType.LineThrough : TextDecorationType.None })
+          .decoration({ type: isCompleted(item) ? TextDecorationType.LineThrough : TextDecorationType.None })
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
-        if (item.hasLocation()) {
+        if (hasLocation(item)) {
           Text(this.placeLabel(item))
             .fontSize(12)
             .fontWeight(FontWeight.Regular)
@@ -618,8 +617,8 @@ export struct ReminderListPage {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
         }
-        if (item.isCompleted()) {
-          Text(item.statusText())
+        if (isCompleted(item)) {
+          Text(reminderStatusText(item))
             .fontSize(10)
             .fontColor(Theme.sub(this.uiMode))
         }
@@ -672,15 +671,15 @@ export struct ReminderListPage {
       .alignItems(VerticalAlign.Center)
       .padding({ left: 4, right: 4, top: 18, bottom: 2 })
 
-      ForEach(this.overdueItems(), (item: ReminderCardData) => {
+      ForEach(this.overdueItems(), (item: Reminder) => {
         this.OverdueRow(item)
-      }, (item: ReminderCardData) => `od-${this.storeVersion}-${item.renderKey()}`)
+      }, (item: Reminder) => `od-${this.dataVersion}-${reminderRenderKey(item)}`)
     }
     .width('100%')
   }
 
   @Builder
-  OverdueRow(item: ReminderCardData) {
+  OverdueRow(item: Reminder) {
     Column({ space: 8 }) {
       Row({ space: 12 }) {
         Column({ space: 2 }) {
@@ -688,7 +687,7 @@ export struct ReminderListPage {
             .fontSize(11)
             .fontWeight(FontWeight.Bold)
             .fontColor(Theme.alert(this.uiMode))
-          Text(item.timeText())
+          Text(reminderTimeText(item))
             .fontFamily('serif')
             .fontSize(15)
             .fontWeight(900)
@@ -705,7 +704,7 @@ export struct ReminderListPage {
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
-          if (item.hasLocation()) {
+          if (hasLocation(item)) {
             Text(this.placeLabel(item))
               .fontSize(12)
               .fontColor(Theme.sub(this.uiMode))
@@ -761,18 +760,35 @@ export struct ReminderListPage {
   @Builder
   GroupListBlock() {
     Column({ space: StyleConstants.SPACE_SECTION }) {
+      if (this.loadError !== '') {
+        Text(this.loadError)
+          .fontSize(StyleConstants.FONT_SECTION_INDEX)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.alert(this.uiMode))
+          .width('100%')
+      }
       if (this.overdueItems().length > 0) {
         this.OverdueBlock()
       }
-      ForEach(this.groups, (group: ReminderGroupData, groupIndex: number) => {
-        Column() {
-          this.GroupHeader(group, groupIndex)
-          ForEach(this.liveGroupItems(group, groupIndex), (item: ReminderCardData, itemIndex: number) => {
-            this.ScheduleEntry(item, groupIndex === 0 && itemIndex === 0 && !item.isCompleted(), true, itemIndex)
-          }, (item: ReminderCardData, itemIndex: number) => `${this.storeVersion}-${item.renderKey()}-${itemIndex}`)
+      ForEach(this.groups, (group: GroupDef, groupIndex: number) => {
+        if (this.liveGroupItems(groupIndex).length > 0) {
+          Column() {
+            this.GroupHeader(group, groupIndex)
+            ForEach(this.liveGroupItems(groupIndex), (item: Reminder, itemIndex: number) => {
+              this.ScheduleEntry(item, groupIndex === 0 && itemIndex === 0 && !isCompleted(item), true, itemIndex)
+            }, (item: Reminder, itemIndex: number) => `${this.dataVersion}-${reminderRenderKey(item)}-${itemIndex}`)
+          }
+          .width('100%')
         }
-        .width('100%')
-      }, (group: ReminderGroupData) => group.groupOverline)
+      }, (group: GroupDef) => group.overline)
+      if (this.overdueItems().length === 0 && this.liveGroupItems(0).length === 0 &&
+        this.liveGroupItems(1).length === 0 && this.liveGroupItems(2).length === 0) {
+        Text('还没有提醒。在「今日」页新建一条试试。')
+          .fontSize(StyleConstants.FONT_BODY_SM)
+          .fontColor(Theme.sub(this.uiMode))
+          .width('100%')
+          .padding({ top: StyleConstants.SPACE_LG, bottom: StyleConstants.SPACE_LG })
+      }
     }
     .width('100%')
   }
@@ -1015,9 +1031,9 @@ export struct ReminderListPage {
             })
         } else {
           Column() {
-            ForEach(this.itemsOnDate(this.selectedDay), (item: ReminderCardData, index: number) => {
-              this.ScheduleEntry(item, index === 0 && !item.isCompleted(), false, index)
-            }, (item: ReminderCardData, index: number) => `${this.storeVersion}-${item.renderKey()}-${index}`)
+            ForEach(this.itemsOnDate(this.selectedDay), (item: Reminder, index: number) => {
+              this.ScheduleEntry(item, index === 0 && !isCompleted(item), false, index)
+            }, (item: Reminder, index: number) => `${this.dataVersion}-${reminderRenderKey(item)}-${index}`)
           }
           .width('100%')
         }
@@ -1028,7 +1044,7 @@ export struct ReminderListPage {
     .margin({ top: StyleConstants.SPACE_LG })
   }
 
-  goDetail(item: ReminderCardData): void {
-    this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_DETAIL, new ReminderDetailNavParam(item));
+  goDetail(item: Reminder): void {
+    this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_DETAIL, new ReminderDetailNavParam(item.id));
   }
 }

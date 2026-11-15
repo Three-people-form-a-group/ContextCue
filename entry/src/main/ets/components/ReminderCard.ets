@@ -1,129 +1,15 @@
 import { StyleConstants } from '../common/StyleConstants';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
-import { UiReminderStatus, UiTriggerType, UiReminderSource, UiLocationTriggerMode } from '../common/UiReminderSemantics';
-
-function formatClockText(epochMs: number | undefined): string {
-  if (epochMs === undefined) {
-    return '时间待定';
-  }
-  if (epochMs <= 0) {
-    return '时间待定';
-  }
-  const d: Date = new Date(epochMs);
-  const h: number = d.getHours();
-  const m: number = d.getMinutes();
-  const hText: string = h < 10 ? `0${h}` : `${h}`;
-  const mText: string = m < 10 ? `0${m}` : `${m}`;
-  return `${hText}:${mText}`;
-}
-
-/**
- * 提醒展示用占位视图模型（非团队公共 Reminder 数据模型）。
- * 字段语义对齐《ContextCue 公共架构与 AI 模块开发规范 v1.0》§5.2；
- * 展示文案全部由这些字段派生，本文件不改变任何字段语义。
- */
-export class ReminderCardData {
-  readonly id: string;
-  readonly content: string;
-  readonly triggerType: string;
-  readonly source: string;
-  readonly status: string;
-  readonly triggerTime?: number;
-  readonly sceneId?: string;
-  readonly sceneName?: string;
-  readonly locationTriggerMode?: string;
-
-  constructor(id: string, content: string, triggerType: string, source: string, status: string,
-    triggerTime?: number, sceneId?: string, sceneName?: string, locationTriggerMode?: string) {
-    this.id = id;
-    this.content = content;
-    this.triggerType = triggerType;
-    this.source = source;
-    this.status = status;
-    this.triggerTime = triggerTime;
-    this.sceneId = sceneId;
-    this.sceneName = sceneName;
-    this.locationTriggerMode = locationTriggerMode;
-  }
-
-  primaryText(): string {
-    if (this.triggerType === UiTriggerType.LOCATION) {
-      return this.sceneName ? this.sceneName : '地点待定';
-    }
-    return formatClockText(this.triggerTime);
-  }
-
-  timeText(): string {
-    if (this.triggerType === UiTriggerType.LOCATION) {
-      return '—';
-    }
-    return formatClockText(this.triggerTime);
-  }
-
-  typeText(): string {
-    if (this.triggerType === UiTriggerType.BOTH) {
-      return '时间+地点';
-    }
-    if (this.triggerType === UiTriggerType.LOCATION) {
-      return '地点提醒';
-    }
-    return '时间提醒';
-  }
-
-  sourceText(): string {
-    return this.source === UiReminderSource.AI ? 'AI 解析' : '手动创建';
-  }
-
-  statusText(): string {
-    if (this.status === UiReminderStatus.TRIGGERED) {
-      return '已触发';
-    }
-    if (this.status === UiReminderStatus.COMPLETED) {
-      return '已完成';
-    }
-    if (this.status === UiReminderStatus.DISABLED) {
-      return '已禁用';
-    }
-    return '进行中';
-  }
-
-  locationText(): string {
-    const scene: string = this.sceneName ? this.sceneName : '';
-    if (scene === '') {
-      return '未设置';
-    }
-    const mode: string = this.locationTriggerMode === UiLocationTriggerMode.EXIT ? '离开时' : '进入时';
-    return `${scene}（${mode}）`;
-  }
-
-  /** 触发方式文案，由真实 locationTriggerMode 派生（V1 仅 ENTER 可用）。 */
-  locationModeText(): string {
-    return this.locationTriggerMode === UiLocationTriggerMode.EXIT ? '离开场景时触发' : '进入场景时触发';
-  }
-
-  isCompleted(): boolean {
-    return this.status === UiReminderStatus.COMPLETED;
-  }
-
-  isLocationOnly(): boolean {
-    return this.triggerType === UiTriggerType.LOCATION;
-  }
-
-  isDualFocus(): boolean {
-    return this.triggerType === UiTriggerType.BOTH;
-  }
-
-  hasLocation(): boolean {
-    return this.triggerType !== UiTriggerType.TIME;
-  }
-
-  /** ForEach 渲染键：时间/状态/内容变化时强制重建，避免复用旧组件。 */
-  renderKey(): string {
-    const t: string = this.triggerTime === undefined ? 'x' : `${this.triggerTime}`;
-    return `${this.id}-${t}-${this.status}-${this.content}`;
-  }
-}
+import { Reminder } from '../model/Reminder';
+import { ReminderSource, ReminderStatus, TriggerType } from '../model/ReminderEnums';
+import {
+  isDualFocus,
+  isLocationOnly,
+  reminderLocationModeText,
+  reminderLocationText,
+  reminderPrimaryText
+} from '../common/ReminderView';
 
 /** 兼容旧的形态参数（外部若仍按 HERO / COMPACT 调用，会映射到 LEAD / EDITORIAL）。 */
 export class ReminderCardVariant {
@@ -147,7 +33,10 @@ export class SlipRole {
 
 @Component
 export struct ReminderCard {
-  data: ReminderCardData = new ReminderCardData('', '', UiTriggerType.TIME, UiReminderSource.MANUAL, UiReminderStatus.ACTIVE);
+  data: Reminder = {
+    id: '', content: '', triggerType: TriggerType.TIME,
+    status: ReminderStatus.ACTIVE, source: ReminderSource.MANUAL, createdAt: 0
+  };
   variant: string = ReminderCardVariant.HERO;
   role: string = '';
   isNext: boolean = false;
@@ -200,14 +89,14 @@ export struct ReminderCard {
       .border({ width: { bottom: 1 }, color: Theme.rule(this.uiMode) })
 
       Row({ space: 10 }) {
-        Text(this.data.primaryText())
-          .fontSize(this.data.isLocationOnly() ? 19 : 32)
+        Text(reminderPrimaryText(this.data))
+          .fontSize(isLocationOnly(this.data) ? 19 : 32)
           .minFontSize(16)
-          .fontFamily(this.data.isLocationOnly() ? 'sans-serif' : 'serif')
+          .fontFamily(isLocationOnly(this.data) ? 'sans-serif' : 'serif')
           .fontWeight(900)
           .fontColor(Theme.accent(this.uiMode))
           .width(85)
-          .maxLines(this.data.isLocationOnly() ? 2 : 1)
+          .maxLines(isLocationOnly(this.data) ? 2 : 1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
 
         Column({ space: 5 }) {
@@ -218,8 +107,8 @@ export struct ReminderCard {
             .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .width('100%')
-          if (this.data.isDualFocus()) {
-            Text(this.data.locationText())
+          if (isDualFocus(this.data)) {
+            Text(reminderLocationText(this.data))
               .fontSize(12)
               .fontColor($r('app.color.ink_on_paper'))
               .maxLines(2)
@@ -267,7 +156,7 @@ export struct ReminderCard {
 
       Column({ space: StyleConstants.SPACE_XS }) {
         Row({ space: StyleConstants.SPACE_SM }) {
-          Text(this.data.primaryText())
+          Text(reminderPrimaryText(this.data))
             .fontSize(StyleConstants.FONT_EDITORIAL_TIME + 14)
             .minFontSize(34)
             .maxFontSize(StyleConstants.FONT_EDITORIAL_TIME + 14)
@@ -301,13 +190,13 @@ export struct ReminderCard {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
-        if (this.data.isDualFocus()) {
+        if (isDualFocus(this.data)) {
           Row({ space: StyleConstants.SPACE_XS }) {
             Column()
               .width(6)
               .height(6)
               .backgroundColor($r('app.color.accent_sage'))
-            Text(this.data.locationText())
+            Text(reminderLocationText(this.data))
               .fontSize(StyleConstants.FONT_BODY_SM)
               .fontWeight(FontWeight.Bold)
               .fontColor(Theme.text(this.uiMode))
@@ -346,7 +235,7 @@ export struct ReminderCard {
     Row({ space: StyleConstants.SPACE_LG }) {
       // 地名和触发条件排成边栏。
       Column({ space: StyleConstants.SPACE_XS }) {
-        Text(this.data.primaryText())
+        Text(reminderPrimaryText(this.data))
           .fontSize(StyleConstants.FONT_FIELD_NAME)
           .fontWeight(900)
           .fontColor(Theme.ink(this.uiMode))
@@ -368,7 +257,7 @@ export struct ReminderCard {
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
-        Text(this.data.locationModeText())
+        Text(reminderLocationModeText(this.data))
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Medium)
           .fontColor(Theme.sub(this.uiMode))
@@ -408,7 +297,7 @@ export struct ReminderCard {
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        Text(this.data.primaryText())
+        Text(reminderPrimaryText(this.data))
           .fontSize(StyleConstants.FONT_TITLE_LG)
           .fontWeight(900)
           .fontColor(Theme.sub(this.uiMode))

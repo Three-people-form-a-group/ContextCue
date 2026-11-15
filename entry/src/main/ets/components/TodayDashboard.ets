@@ -1,7 +1,19 @@
 import { StyleConstants } from '../common/StyleConstants';
 import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '../common/RouterConstants';
-import { UiReminderStore } from '../common/UiReminderStore';
-import { ReminderCardData, ReminderCard, SlipRole } from './ReminderCard';
+import { ReminderCard, SlipRole } from './ReminderCard';
+import { Reminder } from '../model/Reminder';
+import { getAppServices } from '../app/AppServiceRegistry';
+import {
+  hasLocation,
+  isCompleted,
+  isLocationOnly,
+  isPending,
+  reminderLocationModeText,
+  reminderLocationText,
+  reminderPrimaryText,
+  reminderRenderKey,
+  reminderTimeText
+} from '../common/ReminderView';
 import { OtterSlot, OtterState } from './OtterSlot';
 import { EmptyState } from './EmptyState';
 import { UiMode } from '../common/UiMode';
@@ -23,7 +35,7 @@ const VIEW_TIMELINE: string = 'timeline';
  * 时间差 → 视觉间距（vp）。对数压缩，单调且有上限。
  * 只有两端都有真实 triggerTime 时才计算；地点提醒没有时间时不虚构。
  */
-function gapHeightVp(prev: ReminderCardData, cur: ReminderCardData): number {
+function gapHeightVp(prev: Reminder, cur: Reminder): number {
   if (prev.triggerTime === undefined || cur.triggerTime === undefined) {
     return StyleConstants.GAP_MIN;
   }
@@ -36,7 +48,7 @@ function gapHeightVp(prev: ReminderCardData, cur: ReminderCardData): number {
 }
 
 /** 时间差批注：＋45 分钟 / ＋6 小时 / ＋4 小时 30 分钟；无法计算时返回空串。 */
-function formatGap(prev: ReminderCardData, cur: ReminderCardData): string {
+function formatGap(prev: Reminder, cur: Reminder): string {
   if (prev.triggerTime === undefined || cur.triggerTime === undefined) {
     return '';
   }
@@ -58,13 +70,13 @@ function formatGap(prev: ReminderCardData, cur: ReminderCardData): string {
  *   已完成 → ARCHIVE；第一条 → LEAD；带地点且偶数位 → FIELD；
  *   每三条一次 → EDITORIAL；其余 → SLIP。
  */
-function resolveSlipRole(item: ReminderCardData, index: number): string {
-  if (item.isCompleted()) {
+function resolveSlipRole(item: Reminder, index: number): string {
+  if (isCompleted(item)) {
     return SlipRole.ARCHIVE;
   }
   // 只有「纯地点提醒」才进入 FIELD 版式；
   // 时间+地点（BOTH）必须以时间为主信息，否则会看起来像纯地点提醒。
-  if (item.isLocationOnly() && index % 2 === 0) {
+  if (isLocationOnly(item) && index % 2 === 0) {
     return SlipRole.FIELD;
   }
   // 其余全部使用开放式排版：不再为普通提醒增加容器
@@ -82,8 +94,10 @@ export struct TodayDashboard {
   private dayTimer: number = -1;
   private todayKey: string = '';
   @State viewMode: string = VIEW_ARCHIVE;
-  // 版本号变化 → 重渲染 → 通过方法读取最新数据
-  @StorageLink('uiReminderVersion') storeVersion: number = 0;
+  // 数据变更信号：提醒被创建/编辑/完成/删除后，其它页面据此重新查询服务
+  @StorageLink('ccDataVersion') @Watch('onDataChanged') dataVersion: number = 0;
+  @State items: Reminder[] = [];
+  @State loadError: string = '';
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
   @StorageLink('paperVersion') paperVersion: number = 1;
   @StorageLink('draftVersion') draftVersion: number = 1;
@@ -103,38 +117,74 @@ export struct TodayDashboard {
    * 今日只显示「今天」的提醒 + 没有时间的纯地点提醒。
    * 昨天及更早未完成的（逾期）归到日程页的逾期区，跨 0 点自动换日。
    */
-  private activeItems(): ReminderCardData[] {
-    const all: ReminderCardData[] = UiReminderStore.sortedActive();
+  private activeItems(): Reminder[] {
     const start: number = this.todayStartMs;
-    if (start <= 0) {
-      return all;
-    }
     const end: number = start + 24 * 3600 * 1000;
-    const out: ReminderCardData[] = [];
-    for (let i = 0; i < all.length; i++) {
-      const t: number | undefined = all[i].triggerTime;
-      if (t === undefined || (t >= start && t < end)) {
-        out.push(all[i]);
+    const out: Reminder[] = [];
+    const pending: Reminder[] = this.pendingItems();
+    for (let i = 0; i < pending.length; i++) {
+      const t: number | undefined = pending[i].triggerTime;
+      if (start <= 0 || t === undefined || (t >= start && t < end)) {
+        out.push(pending[i]);
       }
     }
     return out;
   }
 
-  private doneItems(): ReminderCardData[] {
-    return UiReminderStore.getDone();
+  /** 全部待办（ACTIVE + TRIGGERED），按真实时间升序；没有时间的排最后 */
+  private pendingItems(): Reminder[] {
+    const timed: Reminder[] = [];
+    const untimed: Reminder[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const item: Reminder = this.items[i];
+      if (!isPending(item)) {
+        continue;
+      }
+      if (item.triggerTime === undefined) {
+        untimed.push(item);
+      } else {
+        timed.push(item);
+      }
+    }
+    timed.sort((a: Reminder, b: Reminder) => {
+      const ta: number = a.triggerTime === undefined ? 0 : a.triggerTime;
+      const tb: number = b.triggerTime === undefined ? 0 : b.triggerTime;
+      return ta - tb;
+    });
+    return timed.concat(untimed);
+  }
+
+  private doneItems(): Reminder[] {
+    return this.items.filter((item: Reminder) => isCompleted(item));
   }
 
   aboutToAppear(): void {
     this.refreshToday();
-    const active: ReminderCardData[] = this.activeItems();
-    for (let i = 0; i < active.length; i++) {
-      DoodleStore.load(getContext(this), active[i].id);
-      NoteLayoutStore.load(getContext(this), active[i].id);
-    }
+    this.loadItems();
     // 每分钟看一眼日期：跨 0 点后重新计算标题与今日列表
     this.dayTimer = setInterval(() => {
       this.refreshToday();
     }, 60000);
+  }
+
+  /** 提醒数据只从 ReminderService 读取，页面自己持有响应式副本 */
+  private async loadItems(): Promise<void> {
+    const result = await getAppServices().reminderService.findAll();
+    if (result.success && result.data !== undefined) {
+      this.items = result.data;
+      this.loadError = '';
+      const active: Reminder[] = this.activeItems();
+      for (let i = 0; i < active.length; i++) {
+        DoodleStore.load(getContext(this), active[i].id);
+        NoteLayoutStore.load(getContext(this), active[i].id);
+      }
+    } else {
+      this.loadError = result.error === undefined ? '读取提醒失败' : result.error.message;
+    }
+  }
+
+  onDataChanged(): void {
+    this.loadItems();
   }
 
   aboutToDisappear(): void {
@@ -170,16 +220,16 @@ export struct TodayDashboard {
     return n < 10 ? `0${n}` : `${n}`;
   }
 
-  private allItems(): ReminderCardData[] {
+  private allItems(): Reminder[] {
     return this.activeItems().concat(this.doneItems());
   }
 
   /** 带时间的提醒，按真实时间升序；没有时间的不参与时间轴节点。 */
-  private timedItems(): ReminderCardData[] {
-    const timed: ReminderCardData[] = this.allItems().filter((item: ReminderCardData) => {
+  private timedItems(): Reminder[] {
+    const timed: Reminder[] = this.allItems().filter((item: Reminder) => {
       return item.triggerTime !== undefined;
     });
-    timed.sort((a: ReminderCardData, b: ReminderCardData) => {
+    timed.sort((a: Reminder, b: Reminder) => {
       const ta: number | undefined = a.triggerTime;
       const tb: number | undefined = b.triggerTime;
       const va: number = ta === undefined ? 0 : ta;
@@ -189,18 +239,18 @@ export struct TodayDashboard {
     return timed;
   }
 
-  private untimedItems(): ReminderCardData[] {
-    return this.allItems().filter((item: ReminderCardData) => item.triggerTime === undefined);
+  private untimedItems(): Reminder[] {
+    return this.allItems().filter((item: Reminder) => item.triggerTime === undefined);
   }
 
   /** 时间轴上相邻两个真实节点之间的压缩间距（复用档案视图同一对数映射）。 */
   private timelineGapHeightAt(prevIndex: number, index: number): number {
-    const list: ReminderCardData[] = this.timedItems();
+    const list: Reminder[] = this.timedItems();
     return gapHeightVp(list[prevIndex], list[index]);
   }
 
   private timelineGapLabelAt(prevIndex: number, index: number): string {
-    const list: ReminderCardData[] = this.timedItems();
+    const list: Reminder[] = this.timedItems();
     return formatGap(list[prevIndex], list[index]);
   }
 
@@ -209,6 +259,14 @@ export struct TodayDashboard {
       Scroll() {
         Column() {
           this.MastheadBlock()
+          if (this.loadError !== '') {
+            Text(this.loadError)
+              .fontSize(12)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Theme.alert(this.uiMode))
+              .width('100%')
+              .margin({ top: 8, bottom: 8 })
+          }
           if (this.viewMode === VIEW_ARCHIVE) {
             this.ArchiveBlock()
             this.SealedBlock()
@@ -450,7 +508,7 @@ export struct TodayDashboard {
   }
 
   @Builder
-  SlipRow(item: ReminderCardData, index: number) {
+  SlipRow(item: Reminder, index: number) {
     ReminderCard({
       data: item,
       role: resolveSlipRole(item, index),
@@ -467,7 +525,7 @@ export struct TodayDashboard {
 
   /** 当前最紧的一条：靠错位、字重和一条细线强调，而不是整块填色 */
   @Builder
-  CurrentEntry(item: ReminderCardData, index: number) {
+  CurrentEntry(item: Reminder, index: number) {
     Row() {
       Column().width(14)
       Column({ space: 6 }) {
@@ -484,7 +542,7 @@ export struct TodayDashboard {
               ? $r('app.color.accent_mustard')
               : Theme.rule(this.uiMode))
           Blank()
-          Text(item.timeText())
+          Text(reminderTimeText(item))
             .fontFamily('serif')
             .fontSize(20)
             .fontWeight(900)
@@ -502,8 +560,8 @@ export struct TodayDashboard {
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
-        if (item.hasLocation()) {
-          Text(item.locationText())
+        if (hasLocation(item)) {
+          Text(reminderLocationText(item))
             .fontSize(12)
             .fontColor($r('app.color.text_secondary'))
         }
@@ -528,7 +586,7 @@ export struct TodayDashboard {
           subtitle: '可以记下今天想做的事'
         })
       } else {
-        ForEach(this.activeItems(), (item: ReminderCardData, index: number) => {
+        ForEach(this.activeItems(), (item: Reminder, index: number) => {
           if (index > 0) {
             this.GapRow(index - 1, index)
           }
@@ -545,7 +603,7 @@ export struct TodayDashboard {
                 // 隐藏系统文字：只留一个小时间标记，其余留白给用户手写/涂鸦
                 // 只留时间，但整块依然可点：点进去就能看到内容/取消隐藏
                 Row() {
-                  Text(item.timeText())
+                  Text(reminderTimeText(item))
                     .fontFamily('serif')
                     .fontSize(11)
                     .fontWeight(FontWeight.Bold)
@@ -562,9 +620,9 @@ export struct TodayDashboard {
                 } else {
                   NoteLayoutView({
                     layoutData: NoteLayoutStore.data(item.id),
-                    time: item.isLocationOnly() ? '到达时' : item.timeText(),
+                    time: isLocationOnly(item) ? '到达时' : reminderTimeText(item),
                     title: item.content,
-                    place: item.hasLocation() ? item.locationText() : '',
+                    place: hasLocation(item) ? reminderLocationText(item) : '',
                     featured: index === 0,
                     editable: false
                   })
@@ -594,8 +652,8 @@ export struct TodayDashboard {
                   this.doodleItemId = item.id;
                   this.doodlePaper = PaperStore.paperOf(item.id);
                   this.doodleTitle = item.content;
-                  this.doodleTime = item.isLocationOnly() ? '到达时' : item.timeText();
-                  this.doodlePlace = item.hasLocation() ? item.locationText() : '';
+                  this.doodleTime = isLocationOnly(item) ? '到达时' : reminderTimeText(item);
+                  this.doodlePlace = hasLocation(item) ? reminderLocationText(item) : '';
                   this.doodleFeatured = index === 0;
                   this.showDoodle = true;
                 })
@@ -605,7 +663,7 @@ export struct TodayDashboard {
           } else {
             this.SlipRow(item, index)
           }
-        }, (item: ReminderCardData) => `${this.storeVersion}-${this.paperVersion}-${item.renderKey()}` +
+        }, (item: Reminder) => `${this.dataVersion}-${this.paperVersion}-${reminderRenderKey(item)}` +
             `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
             `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
       }
@@ -636,7 +694,7 @@ export struct TodayDashboard {
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        ForEach(this.doneItems(), (item: ReminderCardData) => {
+        ForEach(this.doneItems(), (item: Reminder) => {
           ReminderCard({
             data: item,
             role: SlipRole.ARCHIVE,
@@ -644,7 +702,7 @@ export struct TodayDashboard {
               this.goDetail(item);
             }
           })
-        }, (item: ReminderCardData) => `${this.storeVersion}-${this.paperVersion}-${item.renderKey()}` +
+        }, (item: Reminder) => `${this.dataVersion}-${this.paperVersion}-${reminderRenderKey(item)}` +
             `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
             `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
       }
@@ -656,22 +714,22 @@ export struct TodayDashboard {
   // ---------- 时间长卷 ----------
 
   /** 节点：时间在左栏，短刻度连接，内容在右。刻度只属于本节点，不跨行。 */
-  private timelineInk(item: ReminderCardData): ResourceColor {
+  private timelineInk(item: Reminder): ResourceColor {
     if (Theme.isMinimal(this.uiMode)) {
       return Theme.text(this.uiMode);
     }
-    return item.hasLocation() ? $r('app.color.accent_coral') : $r('app.color.accent_sky');
+    return hasLocation(item) ? $r('app.color.accent_coral') : $r('app.color.accent_sky');
   }
 
   @Builder
-  TimelineNode(item: ReminderCardData) {
+  TimelineNode(item: Reminder) {
     Row({ space: StyleConstants.SPACE_MD }) {
-      Text(item.timeText())
+      Text(reminderTimeText(item))
         .fontSize(StyleConstants.FONT_TITLE)
         .minFontSize(16)
         .maxFontSize(StyleConstants.FONT_TITLE)
         .fontWeight(900)
-        .fontColor(item.isCompleted()
+        .fontColor(isCompleted(item)
           ? $r('app.color.text_secondary')
           : $r('app.color.text_primary'))
         .width(StyleConstants.TIMELINE_TIME_GUTTER)
@@ -682,7 +740,7 @@ export struct TodayDashboard {
         Column()
           .width(14)
           .height(3)
-          .backgroundColor(item.isCompleted()
+          .backgroundColor(isCompleted(item)
             ? $r('app.color.border_subtle')
             : this.timelineInk(item))
       }
@@ -693,23 +751,23 @@ export struct TodayDashboard {
         Text(item.content)
           .fontSize(StyleConstants.FONT_BODY)
           .fontWeight(FontWeight.Bold)
-          .fontColor(item.isCompleted()
+          .fontColor(isCompleted(item)
             ? $r('app.color.text_secondary')
             : $r('app.color.text_primary'))
           .decoration({
-            type: item.isCompleted() ? TextDecorationType.LineThrough : TextDecorationType.None
+            type: isCompleted(item) ? TextDecorationType.LineThrough : TextDecorationType.None
           })
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
 
-        if (item.hasLocation()) {
+        if (hasLocation(item)) {
           Row({ space: StyleConstants.SPACE_XS }) {
             Column()
               .width(6)
               .height(6)
               .backgroundColor($r('app.color.accent_sage'))
-            Text(item.locationText())
+            Text(reminderLocationText(item))
               .fontSize(StyleConstants.FONT_CAPTION)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
@@ -764,7 +822,7 @@ export struct TodayDashboard {
 
   /** 无固定时间的提醒：不虚构节点与间隔，单独成区。 */
   @Builder
-  UntimedNode(item: ReminderCardData) {
+  UntimedNode(item: Reminder) {
     Row({ space: StyleConstants.SPACE_MD }) {
       Column()
         .width(4)
@@ -772,7 +830,7 @@ export struct TodayDashboard {
         .backgroundColor($r('app.color.accent_sage'))
 
       Column({ space: StyleConstants.SPACE_XS }) {
-        Text(item.primaryText())
+        Text(reminderPrimaryText(item))
           .fontSize(StyleConstants.FONT_BODY)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
@@ -784,7 +842,7 @@ export struct TodayDashboard {
           .fontColor($r('app.color.text_secondary'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-        Text(item.locationModeText())
+        Text(reminderLocationModeText(item))
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontColor($r('app.color.text_secondary'))
           .opacity(0.8)
@@ -832,12 +890,12 @@ export struct TodayDashboard {
             bottom: StyleConstants.SPACE_MD
           })
       } else {
-        ForEach(this.timedItems(), (item: ReminderCardData, index: number) => {
+        ForEach(this.timedItems(), (item: Reminder, index: number) => {
           if (index > 0) {
             this.TimelineGapRow(index - 1, index)
           }
           this.TimelineNode(item)
-        }, (item: ReminderCardData) => `${this.storeVersion}-${this.paperVersion}-${item.renderKey()}` +
+        }, (item: Reminder) => `${this.dataVersion}-${this.paperVersion}-${reminderRenderKey(item)}` +
             `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
             `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
       }
@@ -865,9 +923,9 @@ export struct TodayDashboard {
             bottom: StyleConstants.SPACE_SM
           })
 
-          ForEach(this.untimedItems(), (item: ReminderCardData) => {
+          ForEach(this.untimedItems(), (item: Reminder) => {
             this.UntimedNode(item)
-          }, (item: ReminderCardData) => `${this.storeVersion}-${this.paperVersion}-${item.renderKey()}` +
+          }, (item: Reminder) => `${this.dataVersion}-${this.paperVersion}-${reminderRenderKey(item)}` +
             `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
             `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
         }
@@ -977,11 +1035,11 @@ export struct TodayDashboard {
     return DraftStore.count();
   }
 
-  goDetail(item: ReminderCardData): void {
+  goDetail(item: Reminder): void {
     // 长按刚结束时，子组件还会补发一次点击——这里吞掉，避免误跳详情
     if (Date.now() - this.longPressAt < 900) {
       return;
     }
-    this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_DETAIL, new ReminderDetailNavParam(item));
+    this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_DETAIL, new ReminderDetailNavParam(item.id));
   }
 }

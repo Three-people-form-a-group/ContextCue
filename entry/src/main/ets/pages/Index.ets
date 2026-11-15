@@ -3,6 +3,7 @@ import { RouterConstants } from '../common/RouterConstants';
 import { UiMode } from '../common/UiMode';
 import { PaperStore } from '../common/PaperStore';
 import { DraftStore } from '../common/DraftStore';
+import { RefreshSignal } from '../common/RefreshSignal';
 import { Theme } from '../common/Theme';
 import { TodayDashboard } from '../components/TodayDashboard';
 import { ReminderListPage } from './ReminderListPage';
@@ -33,6 +34,7 @@ struct Index {
     UiMode.init(getContext(this));
     PaperStore.init(getContext(this));
     DraftStore.init(getContext(this));
+    RefreshSignal.ensure();
   }
 
   /**

@@ -2,6 +2,8 @@ import { StyleConstants } from '../common/StyleConstants';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
 import { TopBar } from '../components/TopBar';
+import { getAppServices } from '../app/AppServiceRegistry';
+import { AppRuntimeMode } from '../app/AppServices';
 
 /**
  * 设置页 —— 整份报纸的「出版说明」（COLOPHON）。
@@ -328,14 +330,27 @@ export struct SettingsPage {
       Column() {
         SettingValueRow({
           label: '版本',
-          desc: '当前为 UI 骨架阶段',
+          desc: '已接入公共 ReminderService（开发组合）',
           value: '0.1.0'
+        })
+        SettingValueRow({
+          label: '运行模式',
+          desc: '提醒只保存在本次进程，重启会丢失；暂无自动触发与系统通知',
+          value: this.runtimeModeLabel()
         })
       }
       .width('100%')
       .padding({ left: 60 })
     }
     .width('100%')
+  }
+
+  private runtimeModeLabel(): string {
+    try {
+      return getAppServices().mode === AppRuntimeMode.DEVELOPMENT ? '开发联调' : '集成';
+    } catch (err) {
+      return '未初始化';
+    }
   }
 
   @Builder

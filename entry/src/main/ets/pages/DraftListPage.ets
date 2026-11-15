@@ -4,7 +4,7 @@ import { RouterConstants, ReminderEditNavParam } from '../common/RouterConstants
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
 import { DraftStore, DraftItem, ReminderDraft } from '../common/DraftStore';
-import { UiTriggerType } from '../common/UiReminderSemantics';
+import { TriggerType } from '../model/ReminderEnums';
 import { TopBar } from '../components/TopBar';
 
 /**
@@ -28,7 +28,7 @@ export struct DraftListPage {
   }
 
   private timeText(draft: ReminderDraft): string {
-    if (draft.triggerType === UiTriggerType.LOCATION) {
+    if (draft.triggerType === TriggerType.LOCATION) {
       return draft.sceneName === '' ? '地点未填写' : `到达 ${draft.sceneName} 时`;
     }
     if (draft.timeMs <= 0) {
@@ -39,7 +39,7 @@ export struct DraftListPage {
     const m: number = d.getMinutes();
     const hText: string = h < 10 ? `0${h}` : `${h}`;
     const mText: string = m < 10 ? `0${m}` : `${m}`;
-    const type: string = draft.triggerType === UiTriggerType.BOTH ? ' · 时间+地点' : '';
+    const type: string = draft.triggerType === TriggerType.BOTH ? ' · 时间+地点' : '';
     return `${d.getMonth() + 1}月${d.getDate()}日 ${hText}:${mText}${type}`;
   }
 

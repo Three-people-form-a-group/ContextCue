@@ -10,9 +10,22 @@ import { DoodleSheet } from '../components/DoodleSheet';
 import { NoteLayoutStore } from '../common/NoteLayoutStore';
 import { parseLayout } from '../common/NoteLayoutModel';
 import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '../common/RouterConstants';
-import { UiReminderSource, UiReminderStatus, UiTriggerType } from '../common/UiReminderSemantics';
-import { UiReminderStore } from '../common/UiReminderStore';
-import { ReminderCardData } from '../components/ReminderCard';
+import { Reminder } from '../model/Reminder';
+import { ReminderSource, ReminderStatus, TriggerType } from '../model/ReminderEnums';
+import { getAppServices } from '../app/AppServiceRegistry';
+import { RefreshSignal } from '../common/RefreshSignal';
+import {
+  isCompleted,
+  isLocationOnly,
+  isPending,
+  reminderLocationText,
+  reminderPrimaryText,
+  reminderSourceText,
+  reminderStatusText,
+  reminderTimeText,
+  reminderTypeText,
+  hasLocation
+} from '../common/ReminderView';
 import { TopBar } from '../components/TopBar';
 
 /**
@@ -21,7 +34,7 @@ import { TopBar } from '../components/TopBar';
  * 整页使用新闻纸底色；上方是日期与状态，中间是大号时间与标题，
  * 下方用规整的字段表展示元信息。视觉对比来自标题与分隔线，而不是堆叠圆角卡片。
  * 元信息字段对齐《ContextCue 公共架构与 AI 模块开发规范 v1.0》§5.2，
- * 全部由 ReminderCardData 派生。
+ * 全部由公共 model/Reminder 派生。
  */
 function formatDateLabel(epochMs: number | undefined): string {
   if (epochMs === undefined) {
@@ -38,16 +51,21 @@ function formatDateLabel(epochMs: number | undefined): string {
 @Component
 export struct ReminderDetailPage {
   pathStack: NavPathStack = new NavPathStack();
-  @State card: ReminderCardData =
-    new ReminderCardData('', '', UiTriggerType.TIME, UiReminderSource.MANUAL, UiReminderStatus.ACTIVE);
-  // 编辑页保存后数据会改变；按 id 取最新记录，避免显示旧快照。
-  // 版本号变化 → 从 UI 数据源读回最新记录（onShown 在从编辑页返回时不一定触发）
-  @StorageLink('uiReminderVersion') @Watch('onStoreChanged') storeVersion: number = 0;
+  @State card: Reminder = {
+    id: '', content: '', triggerType: TriggerType.TIME,
+    status: ReminderStatus.ACTIVE, source: ReminderSource.MANUAL, createdAt: 0
+  };
+  @State loaded: boolean = false;
+  @State loadError: string = '';
+  // 提醒被编辑/完成后版本号变化 → 按 id 重新查询服务
+  @StorageLink('ccDataVersion') @Watch('onStoreChanged') dataVersion: number = 0;
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
   @State showPaperPicker: boolean = false;
   @State paper: string = PaperStyle.LARGE_WARM;
   @State textHidden: boolean = false;
   @State showDoodle: boolean = false;
+  /** 今日页第一条是大字号排版；这里跟着用同样的字号，预览才对得上。 */
+  @State featured: boolean = false;
 
   aboutToAppear(): void {
     const params: Array<Object> =
@@ -55,54 +73,37 @@ export struct ReminderDetailPage {
     if (params.length > 0) {
       const last: Object = params[params.length - 1];
       if (last instanceof ReminderDetailNavParam) {
-        this.card = last.data;
+        this.card.id = last.id;
       }
     }
-    // 导航参数可能是旧快照（例如从编辑页返回后本页被重建），先按 id 取一次最新
-    this.refreshFromStore();
     this.paper = PaperStore.paperOf(this.card.id);
     DoodleStore.load(getContext(this), this.card.id);
     NoteLayoutStore.load(getContext(this), this.card.id);
     this.textHidden = PaperStore.isTextHidden(this.card.id);
-  }
-
-  private displayCard(): ReminderCardData {
-    const id: string = this.card.id;
-    // 读一次版本号，建立刷新依赖：数据源一变，build 就会重新取最新记录
-    // （onShown 在从编辑页返回时并不一定触发，不能只靠它）
-    if (id === '' || this.storeVersion < 0) {
-      return this.card;
-    }
-    const active: ReminderCardData[] = UiReminderStore.getActive();
-    for (let i = 0; i < active.length; i++) {
-      if (active[i].id === id) {
-        return active[i];
-      }
-    }
-    const done: ReminderCardData[] = UiReminderStore.getDone();
-    for (let i = 0; i < done.length; i++) {
-      if (done[i].id === id) {
-        return done[i];
-      }
-    }
-    return this.card;
-  }
-
-  /** 今日页第一条是大字号排版；这里跟着用同样的字号，预览才对得上。 */
-  private isFeatured(): boolean {
-    const active: ReminderCardData[] = UiReminderStore.getActive();
-    return active.length > 0 && active[0].id === this.card.id;
+    this.refreshFromStore();
   }
 
   private onStoreChanged(): void {
     this.refreshFromStore();
   }
 
-  /** 页面重新显示时（例如从编辑页返回）从数据源取最新记录。 */
-  private refreshFromStore(): void {
-    const latest: ReminderCardData | undefined = UiReminderStore.findById(this.card.id);
-    if (latest !== undefined) {
-      this.card = latest;
+  /** 按 id 从 ReminderService 取最新记录（导航参数里只有 id） */
+  private async refreshFromStore(): Promise<void> {
+    if (this.card.id === '') {
+      return;
+    }
+    const result = await getAppServices().reminderService.findById(this.card.id);
+    if (result.success && result.data !== undefined) {
+      this.card = result.data;
+      this.loaded = true;
+      this.loadError = '';
+    } else {
+      this.loadError = result.error === undefined ? '读取提醒失败' : result.error.message;
+    }
+    const all = await getAppServices().reminderService.findAll();
+    if (all.success && all.data !== undefined) {
+      const pending: Reminder[] = all.data.filter((r: Reminder) => isPending(r));
+      this.featured = pending.length > 0 && pending[0].id === this.card.id;
     }
   }
 
@@ -179,10 +180,10 @@ export struct ReminderDetailPage {
           DoodleSheet({
             paper: this.paper,
             initial: DoodleStore.get(this.card.id),
-            title: this.displayCard().content,
-            timeText: this.displayCard().isLocationOnly() ? '到达时' : this.displayCard().timeText(),
-            placeText: this.displayCard().hasLocation() ? this.displayCard().locationText() : '',
-            featured: this.isFeatured(),
+            title: this.card.content,
+            timeText: isLocationOnly(this.card) ? '到达时' : reminderTimeText(this.card),
+            placeText: hasLocation(this.card) ? reminderLocationText(this.card) : '',
+            featured: this.featured,
             reminderId: this.card.id,
             // 和今日页共用同一份排版，否则这里看到的是默认排版、改完也回不到今日页
             initialLayout: NoteLayoutStore.data(this.card.id),
@@ -234,13 +235,13 @@ export struct ReminderDetailPage {
           .width(3)
           .height(14)
           .backgroundColor(Theme.ink(this.uiMode))
-        Text(this.displayCard().isLocationOnly() ? '地点便笺' : '事项详情')
+        Text(isLocationOnly(this.card) ? '地点便笺' : '事项详情')
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
           .fontColor(Theme.text(this.uiMode))
           .letterSpacing(2)
         Blank()
-        Text(this.displayCard().statusText())
+        Text(reminderStatusText(this.card))
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.detail_note'))
@@ -254,17 +255,17 @@ export struct ReminderDetailPage {
         .height(StyleConstants.RULE_HEAVY)
         .backgroundColor(Theme.text(this.uiMode))
 
-      Text(formatDateLabel(this.displayCard().triggerTime))
+      Text(formatDateLabel(this.card.triggerTime))
         .fontSize(StyleConstants.FONT_CAPTION)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.detail_note'))
         .letterSpacing(2)
         .margin({ top: StyleConstants.SPACE_SM })
 
-      Text(this.displayCard().isLocationOnly()
-        ? this.displayCard().primaryText()
-        : this.displayCard().timeText())
-        .fontSize(this.displayCard().isLocationOnly()
+      Text(isLocationOnly(this.card)
+        ? reminderPrimaryText(this.card)
+        : reminderTimeText(this.card))
+        .fontSize(isLocationOnly(this.card)
           ? StyleConstants.FONT_TITLE_LG
           : StyleConstants.FONT_TIME_DISPLAY)
         .fontWeight(900)
@@ -277,7 +278,7 @@ export struct ReminderDetailPage {
           color: $r('app.color.detail_ink')
         })
 
-      Text(this.displayCard().content === '' ? '未命名提醒' : this.displayCard().content)
+      Text(this.card.content === '' ? '未命名提醒' : this.card.content)
         .fontSize(StyleConstants.FONT_TITLE_LG)
         .fontWeight(FontWeight.Bold)
         .fontColor(Theme.text(this.uiMode))
@@ -351,7 +352,7 @@ export struct ReminderDetailPage {
 
   @Builder
   CompletionStatus() {
-    if (this.displayCard().isCompleted()) {
+    if (isCompleted(this.card)) {
       Row({ space: 8 }) {
         Text('✓')
           .fontSize(17)
@@ -376,13 +377,13 @@ export struct ReminderDetailPage {
         .width('100%')
         .height(StyleConstants.RULE_MEDIUM)
         .backgroundColor(Theme.text(this.uiMode))
-      this.MetaRow('触发类型', this.displayCard().typeText(), false)
+      this.MetaRow('触发类型', reminderTypeText(this.card), false)
       this.MetaDivider()
-      this.MetaRow('提醒来源', this.displayCard().sourceText(), false)
+      this.MetaRow('提醒来源', reminderSourceText(this.card), false)
       this.MetaDivider()
-      this.MetaRow('当前状态', this.displayCard().statusText(), false)
+      this.MetaRow('当前状态', reminderStatusText(this.card), false)
       this.MetaDivider()
-      this.MetaRow('地点', this.displayCard().locationText(), this.displayCard().hasLocation())
+      this.MetaRow('地点', reminderLocationText(this.card), hasLocation(this.card))
       this.MetaDivider()
       if (this.uiMode === UiMode.JOURNAL) {
         Row() {
@@ -484,6 +485,18 @@ export struct ReminderDetailPage {
     })
   }
 
+  private async deleteReminder(): Promise<void> {
+    const result = await getAppServices().reminderService.delete(this.card.id);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '删除失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    this.pathStack.pop();
+  }
+
   private confirmDelete(): void {
     this.getUIContext().getPromptAction().showDialog({
       title: '删除提醒',
@@ -494,8 +507,7 @@ export struct ReminderDetailPage {
       ]
     }).then((res: promptAction.ShowDialogSuccessResponse) => {
       if (res.index === 1) {
-        UiReminderStore.remove(this.card.id);
-        this.pathStack.pop();
+        this.deleteReminder();
       }
     }).catch(() => {
     });
@@ -537,7 +549,7 @@ export struct ReminderDetailPage {
         })
         .onClick(() => {
           this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_EDIT,
-            new ReminderEditNavParam(RouterConstants.EDIT_MODE_EDIT, this.displayCard()));
+            new ReminderEditNavParam(RouterConstants.EDIT_MODE_EDIT, this.card.id));
         })
       }
       .width('100%')

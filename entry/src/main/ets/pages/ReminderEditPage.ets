@@ -3,11 +3,13 @@ import { StyleConstants } from '../common/StyleConstants';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
 import { RouterConstants, ReminderEditNavParam } from '../common/RouterConstants';
-import { UiReminderStore } from '../common/UiReminderStore';
+import { getAppServices } from '../app/AppServiceRegistry';
+import { RefreshSignal } from '../common/RefreshSignal';
+import { Reminder } from '../model/Reminder';
+import { CreateReminderInput } from '../model/CreateReminderInput';
 import { DraftStore, ReminderDraft } from '../common/DraftStore';
 import { parseTimeInput, TimeParseResult } from '../common/UiTimeInputParser';
-import { UiReminderSource, UiReminderStatus, UiTriggerType, UiLocationTriggerMode } from '../common/UiReminderSemantics';
-import { ReminderCardData } from '../components/ReminderCard';
+import { ReminderSource, TriggerType } from '../model/ReminderEnums';
 import { TopBar } from '../components/TopBar';
 import { FormItem } from '../components/FormItem';
 
@@ -30,11 +32,14 @@ export struct ReminderEditPage {
   @State manualInput: string = '';
   @State saveError: string = '';
   /** 触发方式选择：时间 / 地点 / 时间+地点 */
-  @State typeSel: string = UiTriggerType.TIME;
+  @State typeSel: TriggerType = TriggerType.TIME;
   /** 地点名称（V1 用文本占位，等地点选择器接入） */
   @State sceneInput: string = '';
 
-  private original: ReminderCardData | undefined = undefined;
+  /** 编辑模式下的提醒 id；空串表示新建 */
+  private originalId: string = '';
+  private originalSource: ReminderSource = ReminderSource.MANUAL;
+  private originalSceneId: string = '';
   private draftKeyValue: string = '';
   private initialTitle: string = '';
   private initialTimeMs: number = 0;
@@ -51,19 +56,12 @@ export struct ReminderEditPage {
         if (last.mode === RouterConstants.EDIT_MODE_EDIT) {
           this.pageTitle = '编辑提醒';
           this.pageOverline = '修改中';
-          if (last.data !== undefined) {
-            this.original = last.data;
-            this.titleInput = last.data.content;
-            if (last.data.triggerTime !== undefined) {
-              this.selectedTimeMs = last.data.triggerTime;
-            }
-          }
+          this.originalId = last.id;
         }
       }
     }
-    if (this.original !== undefined) {
-      this.typeSel = this.original.triggerType;
-      this.sceneInput = this.original.sceneName === undefined ? '' : this.original.sceneName;
+    if (this.originalId !== '') {
+      this.loadOriginal();
     }
     if (this.selectedTimeMs === 0) {
       const next: Date = new Date();
@@ -73,9 +71,7 @@ export struct ReminderEditPage {
     }
     // 没有显式传入草稿键时：编辑已有提醒用它的 id，新建则生成一个新的草稿键
     if (this.draftKeyValue === '') {
-      this.draftKeyValue = this.original === undefined
-        ? `draft-${Date.now()}`
-        : this.original.id;
+      this.draftKeyValue = this.originalId === '' ? `draft-${Date.now()}` : this.originalId;
     }
     // 有草稿就恢复，并提示用户
     const draft: ReminderDraft | undefined = DraftStore.get(this.draftKeyValue);
@@ -84,12 +80,46 @@ export struct ReminderEditPage {
       if (draft.timeMs > 0) {
         this.selectedTimeMs = draft.timeMs;
       }
-      this.typeSel = draft.triggerType;
+      this.typeSel = this.toTriggerType(draft.triggerType);
       this.sceneInput = draft.sceneName;
       this.pageOverline = '已恢复草稿';
     }
     this.initialTitle = this.titleInput;
     this.initialTimeMs = this.selectedTimeMs;
+  }
+
+  /** 编辑模式：按 id 从服务读最新提醒填表（导航参数只带 id） */
+  private async loadOriginal(): Promise<void> {
+    const result = await getAppServices().reminderService.findById(this.originalId);
+    if (!result.success || result.data === undefined) {
+      this.saveError = result.error === undefined ? '读取提醒失败' : result.error.message;
+      return;
+    }
+    const r: Reminder = result.data;
+    this.originalSource = r.source;
+    this.originalSceneId = r.sceneId === undefined ? '' : r.sceneId;
+    // 有草稿时以草稿为准：服务里的旧内容不能覆盖用户尚未保存的编辑
+    if (DraftStore.get(this.draftKeyValue) !== undefined) {
+      return;
+    }
+    this.titleInput = r.content;
+    if (r.triggerTime !== undefined) {
+      this.selectedTimeMs = r.triggerTime;
+    }
+    this.typeSel = r.triggerType;
+    this.sceneInput = r.sceneName === undefined ? '' : r.sceneName;
+    this.initialTitle = this.titleInput;
+    this.initialTimeMs = this.selectedTimeMs;
+  }
+
+  private toTriggerType(value: string): TriggerType {
+    if (value === TriggerType.LOCATION) {
+      return TriggerType.LOCATION;
+    }
+    if (value === TriggerType.BOTH) {
+      return TriggerType.BOTH;
+    }
+    return TriggerType.TIME;
   }
 
   private draftKey(): string {
@@ -151,17 +181,17 @@ export struct ReminderEditPage {
 
   private triggerTypeText(): string {
     const t: string = this.triggerType();
-    if (t === UiTriggerType.LOCATION) {
+    if (t === TriggerType.LOCATION) {
       return '地点提醒';
     }
-    if (t === UiTriggerType.BOTH) {
+    if (t === TriggerType.BOTH) {
       return '时间 + 地点';
     }
     return '时间提醒';
   }
 
   private timeRelevant(): boolean {
-    return this.typeSel !== UiTriggerType.LOCATION;
+    return this.typeSel !== TriggerType.LOCATION;
   }
 
   private dateLabel(): string {
@@ -284,7 +314,7 @@ export struct ReminderEditPage {
       this.saveError = '请填写提醒内容';
       return;
     }
-    if (this.typeSel !== UiTriggerType.TIME && this.sceneInput.trim() === '') {
+    if (this.typeSel !== TriggerType.TIME && this.sceneInput.trim() === '') {
       this.saveError = '请填写地点名称';
       return;
     }
@@ -294,35 +324,29 @@ export struct ReminderEditPage {
       return;
     }
 
-    let next: ReminderCardData;
-    if (this.original === undefined) {
-      next = new ReminderCardData(
-        `ui-${Date.now()}`,
-        content,
-        this.typeSel,
-        UiReminderSource.MANUAL,
-        UiReminderStatus.ACTIVE,
-        this.timeRelevant() ? this.selectedTimeMs : undefined,
-        undefined,
-        this.typeSel === UiTriggerType.TIME ? undefined : this.sceneInput.trim(),
-        UiLocationTriggerMode.ENTER
-      );
-    } else {
-      next = new ReminderCardData(
-        this.original.id,
-        content,
-        this.typeSel,
-        this.original.source,
-        this.original.status,
-        this.timeRelevant() ? this.selectedTimeMs : undefined,
-        this.original.sceneId,
-        this.typeSel === UiTriggerType.TIME ? undefined : this.sceneInput.trim(),
-        this.original.locationTriggerMode
-      );
-    }
+    const input: CreateReminderInput = {
+      content: content,
+      triggerType: this.typeSel,
+      triggerTime: this.timeRelevant() ? this.selectedTimeMs : undefined,
+      sceneId: this.typeSel === TriggerType.TIME ? undefined : (this.originalSceneId === '' ? undefined : this.originalSceneId),
+      sceneName: this.typeSel === TriggerType.TIME ? undefined : this.sceneInput.trim(),
+      source: this.originalSource
+    };
+    this.submit(input);
+  }
 
-    UiReminderStore.upsert(next);
+  /** 新建 / 更新统一走 ReminderService；id、状态与时间戳由服务生成或保留 */
+  private async submit(input: CreateReminderInput): Promise<void> {
+    const services = getAppServices();
+    const result = this.originalId === ''
+      ? await services.reminderService.create(input)
+      : await services.reminderService.update(this.originalId, input);
+    if (!result.success) {
+      this.saveError = result.error === undefined ? '保存失败' : result.error.message;
+      return;
+    }
     DraftStore.clear(getContext(this), this.draftKey());
+    RefreshSignal.bump();
     this.pathStack.pop();
   }
 
@@ -633,14 +657,14 @@ export struct ReminderEditPage {
         this.SectionHead('触发条件', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
 
         Row({ space: 8 }) {
-          this.TypeChip('时间', UiTriggerType.TIME)
-          this.TypeChip('地点', UiTriggerType.LOCATION)
-          this.TypeChip('时间 + 地点', UiTriggerType.BOTH)
+          this.TypeChip('时间', TriggerType.TIME)
+          this.TypeChip('地点', TriggerType.LOCATION)
+          this.TypeChip('时间 + 地点', TriggerType.BOTH)
         }
         .width('100%')
         .margin({ top: 4 })
 
-        if (this.typeSel !== UiTriggerType.TIME) {
+        if (this.typeSel !== TriggerType.TIME) {
           TextInput({
             placeholder: '地点名称，例如 家 / 公司',
             text: this.sceneInput
@@ -677,7 +701,7 @@ export struct ReminderEditPage {
   }
 
   @Builder
-  TypeChip(label: string, type: string) {
+  TypeChip(label: string, type: TriggerType) {
     Text(label)
       .fontSize(12)
       .fontWeight(this.typeSel === type ? 900 : FontWeight.Medium)

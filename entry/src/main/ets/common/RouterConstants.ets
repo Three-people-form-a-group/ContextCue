@@ -1,8 +1,9 @@
-import { ReminderCardData } from '../components/ReminderCard';
-
 /**
  * Navigation 组件导航体系的路由名称与页面参数。
  * 本工程仅使用 Navigation/NavPathStack 组件导航，不使用 router 多页面路由。
+ *
+ * 接入公共层后导航参数只带 id：详情页与编辑页用 ReminderService.findById(id) 取最新数据，
+ * 不把整份提醒塞进导航参数，避免页面显示编辑前的旧快照。
  */
 export class RouterConstants {
   static readonly PAGE_REMINDER_DETAIL: string = 'reminderDetail';
@@ -15,33 +16,28 @@ export class RouterConstants {
   static readonly EDIT_MODE_EDIT: string = 'edit';
 }
 
-/**
- * 详情页导航参数：承载整张卡片的展示数据（UI 骨架阶段的轻量导航参数，
- * 不是团队公共 Reminder 数据模型）。接入 ReminderService 后改为仅传 reminderId，
- * 由详情页通过服务按 id 查询真实数据。
- */
+/** 详情页导航参数：只带 reminderId */
 export class ReminderDetailNavParam {
-  readonly data: ReminderCardData;
+  readonly id: string;
 
-  constructor(data: ReminderCardData) {
-    this.data = data;
+  constructor(id: string) {
+    this.id = id;
   }
 }
 
 /**
  * 编辑页导航参数：mode 取 RouterConstants.EDIT_MODE_CREATE / EDIT_MODE_EDIT。
- * data 仅在编辑模式下传入，用于把原始提醒带入表单（时间、内容等）。
- * 这是 UI 骨架阶段的轻量导航参数，不是团队公共 Reminder 数据模型。
+ * id 仅在编辑模式下传入；页面按 id 查询最新提醒再填表。
  */
 export class ReminderEditNavParam {
   readonly mode: string;
-  readonly data?: ReminderCardData;
+  readonly id: string;
   /** 从草稿箱进入时带上草稿键，编辑页据此恢复并更新同一条草稿 */
   readonly draftKey?: string;
 
-  constructor(mode: string, data?: ReminderCardData, draftKey?: string) {
+  constructor(mode: string, id: string = '', draftKey?: string) {
     this.mode = mode;
-    this.data = data;
+    this.id = id;
     this.draftKey = draftKey;
   }
 }

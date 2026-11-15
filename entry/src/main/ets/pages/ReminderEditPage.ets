@@ -442,6 +442,7 @@ export struct ReminderEditPage {
           Column() {
             this.MastheadBlock()
             this.NlSection()
+            this.ContentSection()
             this.TriggerSection()
             // 时间/地点按提醒方式自动显隐；编号跟着可见区块顺延
             if (this.timeRelevant()) {
@@ -645,12 +646,21 @@ export struct ReminderEditPage {
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        Text('提醒内容（可微调）')
-          .fontSize(StyleConstants.FONT_SECTION_INDEX)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(Theme.sub(this.uiMode))
-          .letterSpacing(1)
-          .margin({ top: StyleConstants.SPACE_SM })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .margin({ top: StyleConstants.SPACE_SECTION })
+  }
+
+  @Builder
+  ContentSection() {
+    Row({ space: StyleConstants.SPACE_MD }) {
+      this.SectionNumber('02', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
+      Column({ space: StyleConstants.SPACE_XS }) {
+        this.SectionHead('提醒内容', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
 
         TextArea({
           placeholder: '输入提醒内容',
@@ -687,7 +697,7 @@ export struct ReminderEditPage {
   @Builder
   TimeSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('03', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
+      this.SectionNumber('04', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
         this.SectionHead('日期与时间', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
         FormItem({
@@ -779,7 +789,7 @@ export struct ReminderEditPage {
   @Builder
   TriggerSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('02', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
+      this.SectionNumber('03', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
         this.SectionHead('提醒方式', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
 
@@ -835,7 +845,7 @@ export struct ReminderEditPage {
   @Builder
   PlaceSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber(this.timeRelevant() ? '04' : '03',
+      this.SectionNumber(this.timeRelevant() ? '05' : '04',
         this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sage') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
         this.SectionHead('地点', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sage') : Theme.text(this.uiMode))

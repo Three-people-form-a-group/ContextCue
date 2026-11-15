@@ -80,5 +80,42 @@ export default function timetableParseTest() {
       expect(occurrenceEpochMs(anchor, 8, 8, 1, '08:00')).assertEqual(new Date(2026, 9, 26, 8, 0).getTime());
       expect(occurrenceEpochMs(anchor, 8, 9, 3, '14:00')).assertEqual(new Date(2026, 10, 4, 14, 0).getTime());
     });
+    it('parses optional schedule with keep-null-clear shapes', 0, () => {
+      const base = '{"semesterName":"s","anchorDate":"2026-11-16","anchorWeek":8,';
+      const courses = '"courses":[{"name":"数学","dayOfWeek":1,"startTime":"08:00","endTime":"09:40","weeks":[8]}]}';
+      const withSchedule = parseTimetableData(base + '"schedule":{"firstStart":"08:00","duration":45,"breakMinutes":10,"lunchStart":"12:00","lunchEnd":"14:00","overrides":[{"index":3,"start":"08:10","end":"09:50"}],"locked":[1]},' + courses);
+      const schedule = withSchedule.value?.schedule;
+      expect(schedule?.firstStart).assertEqual('08:00');
+      expect(schedule?.overrides?.length).assertEqual(1);
+      expect(schedule?.overrides?.[0].index).assertEqual(3);
+      expect(schedule?.locked?.[0]).assertEqual(1);
+      const nullSchedule = parseTimetableData(base + '"schedule":null,' + courses);
+      expect(nullSchedule.value?.schedule).assertNull();
+      const noSchedule = parseTimetableData(base + courses);
+      expect(noSchedule.value?.schedule).assertUndefined();
+    });
+    it('rejects malformed schedule payloads', 0, () => {
+      const base = '{"semesterName":"s","anchorDate":"2026-11-16","anchorWeek":8,';
+      const courses = '"courses":[{"name":"数学","dayOfWeek":1,"startTime":"08:00","endTime":"09:40","weeks":[8]}]}';
+      expect(parseTimetableData(base + '"schedule":3,' + courses).issues[0].field).assertEqual('schedule');
+      expect(parseTimetableData(base + '"schedule":{"firstStart":"08:00"},' + courses).issues[0].field).assertEqual('schedule.duration');
+      expect(parseTimetableData(base + '"schedule":{"firstStart":"08:00","duration":"45","breakMinutes":10},' + courses).issues[0].code).assertEqual(TimetableParseIssueCode.INVALID_FIELD);
+    });
+    it('validates schedule value ranges', 0, () => {
+      const draft: TimetableDraft = {
+        semesterName: 's', anchorDate: '2026-11-16', anchorWeek: 8,
+        schedule: { firstStart: '08:00', duration: 0, breakMinutes: 10, lunchStart: '12:00' },
+        courses: [{ name: '数学', dayOfWeek: 1, startTime: '08:00', endTime: '09:40', weeks: [8] }]
+      };
+      const issues = validateTimetableDraft(draft);
+      const fields: string[] = [];
+      for (const issue of issues) {
+        if (issue.field !== undefined) {
+          fields.push(issue.field);
+        }
+      }
+      expect(fields.includes('schedule.duration')).assertTrue();
+      expect(fields.includes('schedule.lunch')).assertTrue();
+    });
   });
 }

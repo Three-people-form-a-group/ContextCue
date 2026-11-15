@@ -133,6 +133,21 @@ export function occurrenceEpochMs(anchorDateMs: number, anchorWeek: number, week
 const MAX_SCHEDULE_DURATION: number = 720;
 
 /** 作息形状校验：时间合法、duration 1–720、overrides/locked 数组形状 */
+function validateBand(start: string | undefined, end: string | undefined, field: string): TimetableParseIssue[] {
+  const issues: TimetableParseIssue[] = [];
+  if (start === undefined && end === undefined) { return issues; }
+  if (start === undefined || end === undefined) {
+    issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, field, '午休/晚餐需成对配置'));
+    return issues;
+  }
+  const s: number | undefined = parseHHmm(start);
+  const e: number | undefined = parseHHmm(end);
+  if (s === undefined || e === undefined || s >= e) {
+    issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, field, '时段起止需有序'));
+  }
+  return issues;
+}
+
 export function validateTimetableSchedule(schedule: TimetableSchedule): TimetableParseIssue[] {
   const issues: TimetableParseIssue[] = [];
   if (parseHHmm(schedule.firstStart) === undefined) {
@@ -167,6 +182,9 @@ export function validateTimetableSchedule(schedule: TimetableSchedule): Timetabl
       issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, key, '时间格式不正确'));
     }
   }
+  // 午休/晚餐带必须成对出现且起止有序（UI 画留白带需要两端边界）
+  issues.push(...validateBand(schedule.lunchStart, schedule.lunchEnd, 'schedule.lunch'));
+  issues.push(...validateBand(schedule.dinnerStart, schedule.dinnerEnd, 'schedule.dinner'));
   if (schedule.overrides !== undefined) {
     if (!Array.isArray(schedule.overrides)) {
       issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.overrides', '单节覆盖必须是数组'));
@@ -199,17 +217,31 @@ export function validateTimetableSchedule(schedule: TimetableSchedule): Timetabl
 }
 
 /** JSON 里的 schedule 字段：undefined=不传 / null=清空 / 对象=解析校验 */
-function parseScheduleField(raw: Object | null): TimetableSchedule | undefined {
+function parseScheduleField(raw: Object | null, issues: TimetableParseIssue[]): TimetableSchedule | undefined {
   const fields = raw as Record<string, Object | null>;
+  if (fields['firstStart'] === undefined) {
+    issues.push(issue(TimetableParseIssueCode.MISSING_FIELD, 'schedule.firstStart', '缺少必需字段'));
+  } else if (typeof fields['firstStart'] !== 'string') {
+    issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.firstStart', '第一节开始时间格式不正确'));
+  }
+  if (fields['duration'] === undefined) {
+    issues.push(issue(TimetableParseIssueCode.MISSING_FIELD, 'schedule.duration', '缺少必需字段'));
+  } else if (typeof fields['duration'] !== 'number') {
+    issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.duration', '每节时长需在 1–720 分钟之间'));
+  }
+  if (fields['breakMinutes'] === undefined) {
+    issues.push(issue(TimetableParseIssueCode.MISSING_FIELD, 'schedule.breakMinutes', '缺少必需字段'));
+  } else if (typeof fields['breakMinutes'] !== 'number') {
+    issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.breakMinutes', '课间需在 0–240 分钟之间'));
+  }
+  if (issues.length > 0) {
+    return undefined;
+  }
   const schedule: TimetableSchedule = {
     firstStart: fields['firstStart'] as string,
     duration: fields['duration'] as number,
     breakMinutes: fields['breakMinutes'] as number
   };
-  if (typeof fields['firstStart'] !== 'string' || typeof fields['duration'] !== 'number' ||
-    typeof fields['breakMinutes'] !== 'number') {
-    return undefined;
-  }
   if (fields['lunchStart'] !== undefined) {
     schedule.lunchStart = fields['lunchStart'] as string;
   }
@@ -255,6 +287,9 @@ function parseScheduleField(raw: Object | null): TimetableSchedule | undefined {
 /** 手动表单路径的同一套校验；解析路径在校验后调用 */
 export function validateTimetableDraft(draft: TimetableDraft): TimetableParseIssue[] {
   const issues: TimetableParseIssue[] = [];
+  if (draft.schedule !== undefined && draft.schedule !== null) {
+    issues.push(...validateTimetableSchedule(draft.schedule));
+  }
   if (draft.semesterName.trim().length === 0) {
     issues.push(fieldIssue(TimetableParseIssueCode.MISSING_FIELD, 'semesterName'));
   }
@@ -408,9 +443,10 @@ export function parseTimetableData(rawResponse: string): TimetableDataParseResul
       if (typeof rawSchedule !== 'object' || Array.isArray(rawSchedule)) {
         return { issues: [fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule')] };
       }
-      const parsedSchedule = parseScheduleField(rawSchedule);
+      const parseIssues: TimetableParseIssue[] = [];
+      const parsedSchedule = parseScheduleField(rawSchedule, parseIssues);
       if (parsedSchedule === undefined) {
-        return { issues: [fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule')] };
+        return { issues: parseIssues.length > 0 ? parseIssues : [fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule')] };
       }
       const scheduleIssues = validateTimetableSchedule(parsedSchedule);
       if (scheduleIssues.length > 0) {

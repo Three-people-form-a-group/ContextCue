@@ -1,4 +1,7 @@
 import { notificationManager } from '@kit.NotificationKit';
+// NotificationRequest.slotType 的字段类型声明在旧模块 @ohos.notification 里（SDK 类型分裂），
+// 只能用旧枚举赋值；弃用警告可接受，待 SDK 统一后迁移。
+import notification from '@ohos.notification';
 import { WantAgent, wantAgent } from '@kit.AbilityKit';
 import { Reminder } from '../../model/Reminder';
 import { ReminderNotificationPort } from '../contract/ReminderNotificationPort';
@@ -52,7 +55,7 @@ export class SystemNotificationPort implements ReminderNotificationPort {
       id: requestCode,
       wantAgent: agent,
       // 服务类通知：允许横幅/声音，按用户的对应开关生效
-      slotType: notificationManager.SlotType.SERVICE_INFORMATION,
+      slotType: notification.SlotType.SERVICE_INFORMATION,
       content: {
         notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
         normal: {

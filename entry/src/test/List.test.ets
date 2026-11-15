@@ -1,3 +1,7 @@
+import locationPlatformTest from './location/LocationPlatform.test';
+import locationAdapterTest from './location/LocationAdapter.test';
+import locationGeometryTest from './location/LocationGeometry.test';
+import sceneCatalogTest from './location/SceneCatalog.test';
 import localUnitTest from './LocalUnit.test';
 import reminderModelTest from './ReminderModel.test';
 import reminderRepositoryTest from './ReminderRepository.test';
@@ -19,6 +23,10 @@ import zhipuAIProviderTest from './ZhipuAIProvider.test';
 
 export default function testsuite() {
   localUnitTest();
+  locationGeometryTest();
+  sceneCatalogTest();
+  locationAdapterTest();
+  locationPlatformTest();
   reminderModelTest();
   reminderRepositoryTest();
   reminderTriggerPortTest();

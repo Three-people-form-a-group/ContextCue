@@ -4,6 +4,8 @@ import { TimetableCourse, PeriodRow, derivePeriods, minutesOfHm, hmText } from '
 import { ScheduleModel } from '../common/ScheduleModel';
 import { ScheduleCalibratorSheet } from './ScheduleCalibratorSheet';
 import { TimetableSchedule } from '../timetable/model/TimetableTypes';
+import { CreateReminderInput } from '../model/CreateReminderInput';
+import { ReminderSource, TriggerType } from '../model/ReminderEnums';
 import { getAppServices } from '../app/AppServiceRegistry';
 import { CourseDraft, TimetableDraft } from '../timetable/model/TimetableTypes';
 import { RefreshSignal } from '../common/RefreshSignal';
@@ -70,6 +72,9 @@ export struct TimetableView {
   /** 自定义作息（展示规则）；没有则按课程时间推导行 */
   @State scheduleModel: ScheduleModel | undefined = undefined;
   @State showCalibrator: boolean = false;
+  /** 「设置当前周 / 删除课程表」弹层 */
+  @State showWeekSheet: boolean = false;
+  @State weekDraft: number = 1;
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
 
   private scroller: Scroller = new Scroller();
@@ -717,6 +722,135 @@ export struct TimetableView {
     return hmText(m);
   }
 
+  /** 设置"本周是第 N 周"：以今天为锚点重存一次，服务据此换算当前周 */
+  private async setAnchorWeek(week: number): Promise<void> {
+    const draft: TimetableDraft = {
+      semesterName: this.semesterName === '' ? '我的课程表' : this.semesterName,
+      anchorDate: this.todayIso(),
+      anchorWeek: week,
+      courses: this.courses.map((c: TimetableCourse) => c.toDraft())
+    };
+    if (this.scheduleModel !== undefined) {
+      draft.schedule = this.scheduleModel.toStored();
+    }
+    const result = await getAppServices().timetableService.saveTimetable(draft);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '设置失败' : result.error.message
+      });
+      return;
+    }
+    this.showWeekSheet = false;
+    this.selectedWeek = week;
+    RefreshSignal.bump();
+    await this.loadTimetable();
+    this.getUIContext().getPromptAction().showToast({ message: `已把本周设为第 ${week} 周` });
+  }
+
+  private confirmDeleteTimetable(): void {
+    this.getUIContext().getPromptAction().showDialog({
+      title: '删除课程表',
+      message: '会删除整张课表，并清理它生成的未来上课提醒。已触发的提醒保留。',
+      buttons: [
+        { text: '取消', color: $r('app.color.text_secondary') },
+        { text: '删除', color: $r('app.color.detail_ink') }
+      ]
+    }).then((result: promptAction.ShowDialogSuccessResponse) => {
+      if (result.index === 1) {
+        this.deleteTimetable();
+      }
+    }).catch(() => {
+    });
+  }
+
+  private async deleteTimetable(): Promise<void> {
+    const result = await getAppServices().timetableService.deleteTimetable();
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '删除失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    this.showWeekSheet = false;
+    this.scheduleModel = undefined;
+    this.selectedWeek = 1;
+    await this.loadTimetable();
+    this.getUIContext().getPromptAction().showToast({ message: '课程表已删除' });
+  }
+
+  /** 这一周这次课的真实时刻：日期取自所选周，时间取自课程 */
+  private occurrenceEpoch(course: TimetableCourse): number {
+    const date: Date = this.dateOfDay(course.dayOfWeek);
+    const minutes: number = minutesOfHm(course.startTime);
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate(),
+      Math.floor(minutes / 60), minutes % 60, 0, 0).getTime();
+  }
+
+  /**
+   * 只调整这一周这次课：找到这次课生成的提醒，改它的时间，课程表本身不变。
+   * 提醒只为本周/下周生成，更远的周次找不到时给出提示。
+   */
+  private async adjustOccurrence(course: TimetableCourse): Promise<void> {
+    const epoch: number = this.occurrenceEpoch(course);
+    if (epoch <= Date.now()) {
+      this.getUIContext().getPromptAction().showToast({ message: '这次课已经过去了' });
+      return;
+    }
+    const result = await getAppServices().reminderService.findAll();
+    if (!result.success || result.data === undefined) {
+      this.getUIContext().getPromptAction().showToast({ message: '读取提醒失败' });
+      return;
+    }
+    let foundId: string = '';
+    let foundContent: string = '';
+    let foundSource: ReminderSource = ReminderSource.MANUAL;
+    for (let i = 0; i < result.data.length; i++) {
+      const r = result.data[i];
+      if (r.triggerTime === epoch && r.content.indexOf(course.name) >= 0) {
+        foundId = r.id;
+        foundContent = r.content;
+        foundSource = r.source;
+        break;
+      }
+    }
+    if (foundId === '') {
+      this.getUIContext().getPromptAction().showToast({
+        message: '这节课的提醒还没生成（只生成本周和下周）'
+      });
+      return;
+    }
+    const current: Date = new Date(epoch);
+    this.getUIContext().showTimePickerDialog({
+      selected: current,
+      format: TimePickerFormat.HOUR_MINUTE,
+      useMilitaryTime: true,
+      onAccept: (value: TimePickerResult) => {
+        const next: number = new Date(current.getFullYear(), current.getMonth(), current.getDate(),
+          value.hour, value.minute, 0, 0).getTime();
+        const input: CreateReminderInput = {
+          content: foundContent,
+          triggerType: TriggerType.TIME,
+          triggerTime: next,
+          source: foundSource
+        };
+        this.updateOccurrence(foundId, input);
+      }
+    });
+  }
+
+  private async updateOccurrence(id: string, input: CreateReminderInput): Promise<void> {
+    const result = await getAppServices().reminderService.update(id, input);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '调整失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    this.getUIContext().getPromptAction().showToast({ message: '已调整这次课的上课提醒' });
+  }
+
   private calibratorInitial(): string {
     const m: ScheduleModel = this.scheduleModel === undefined ? ScheduleModel.regular() : this.scheduleModel;
     return JSON.stringify(m.toStored());
@@ -766,6 +900,9 @@ export struct TimetableView {
       if (this.showDetail) {
         CourseDetailSheet({
           course: this.detailCourse,
+          onAdjustThis: () => {
+            this.adjustOccurrence(this.detailCourse);
+          },
           onClose: () => {
             this.showDetail = false;
           },
@@ -776,6 +913,107 @@ export struct TimetableView {
             this.confirmDelete(this.detailCourse);
           }
         })
+      }
+
+      if (this.showWeekSheet) {
+        Column() {
+          Row() {
+            Text('取消')
+              .fontSize(14)
+              .fontColor(Theme.sub(this.uiMode))
+              .height(StyleConstants.TOUCH_TARGET_MIN)
+              .padding({ left: 8, right: 8 })
+              .textAlign(TextAlign.Center)
+              .onClick(() => {
+                this.showWeekSheet = false;
+              })
+            Blank()
+            Text('周次设置')
+              .fontSize(15)
+              .fontWeight(900)
+              .fontColor(Theme.text(this.uiMode))
+            Blank()
+            Text('保存')
+              .fontSize(14)
+              .fontWeight(900)
+              .fontColor(Theme.accent(this.uiMode))
+              .height(StyleConstants.TOUCH_TARGET_MIN)
+              .padding({ left: 8, right: 8 })
+              .textAlign(TextAlign.Center)
+              .onClick(() => {
+                this.setAnchorWeek(this.weekDraft);
+              })
+          }
+          .width('100%')
+          .height(48)
+          .alignItems(VerticalAlign.Center)
+
+          Column({ space: 14 }) {
+            Text('本周是第几周？')
+              .fontSize(13)
+              .fontColor(Theme.sub(this.uiMode))
+            Row({ space: 18 }) {
+              Text('－')
+                .fontSize(20)
+                .fontWeight(900)
+                .fontColor(Theme.text(this.uiMode))
+                .width(44)
+                .height(44)
+                .textAlign(TextAlign.Center)
+                .border({ width: 1, color: Theme.rule(this.uiMode) })
+                .borderRadius(22)
+                .onClick(() => {
+                  this.weekDraft = Math.max(1, this.weekDraft - 1);
+                })
+              Text(`${this.weekDraft}`)
+                .fontSize(40)
+                .fontWeight(900)
+                .fontColor(Theme.text(this.uiMode))
+                .width(80)
+                .textAlign(TextAlign.Center)
+              Text('＋')
+                .fontSize(20)
+                .fontWeight(900)
+                .fontColor(Theme.text(this.uiMode))
+                .width(44)
+                .height(44)
+                .textAlign(TextAlign.Center)
+                .border({ width: 1, color: Theme.rule(this.uiMode) })
+                .borderRadius(22)
+                .onClick(() => {
+                  this.weekDraft = Math.min(30, this.weekDraft + 1);
+                })
+            }
+            .alignItems(VerticalAlign.Center)
+
+            Text('以今天为锚点重算周次，课程所在周会随之对应。')
+              .fontSize(10)
+              .fontColor(Theme.sub(this.uiMode))
+
+            Blank()
+
+            Text('删除整张课程表')
+              .fontSize(13)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Theme.alert(this.uiMode))
+              .height(44)
+              .width('100%')
+              .textAlign(TextAlign.Center)
+              .border({ width: { top: 1 }, color: Theme.rule(this.uiMode) })
+              .onClick(() => {
+                this.confirmDeleteTimetable();
+              })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .padding({ top: 10 })
+          .alignItems(HorizontalAlign.Center)
+        }
+        .width('100%')
+        .height('56%')
+        .padding(StyleConstants.SPACE_LG)
+        .backgroundColor(Theme.surface(this.uiMode))
+        .borderRadius({ topLeft: 0, topRight: StyleConstants.RADIUS_LG, bottomLeft: 0, bottomRight: 0 })
       }
 
       if (this.showCalibrator) {
@@ -823,7 +1061,7 @@ export struct TimetableView {
       PanGesture({ direction: PanDirection.Horizontal, distance: 24 })
         .onActionEnd((event: GestureEvent) => {
           // 任何弹层打开时都不翻页，避免在表单上横滑把底下的课表换掉
-          if (this.showDetail || this.showEdit || this.showImport || this.showCalibrator) {
+          if (this.showDetail || this.showEdit || this.showImport || this.showCalibrator || this.showWeekSheet) {
             return;
           }
           if (event.offsetX <= -48) {
@@ -904,6 +1142,10 @@ export struct TimetableView {
               .fontColor(Theme.sub(this.uiMode))
           }
           .alignItems(HorizontalAlign.Start)
+          .onClick(() => {
+            this.weekDraft = this.selectedWeek;
+            this.showWeekSheet = true;
+          })
           Text('›')
             .fontSize(18)
             .fontWeight(900)

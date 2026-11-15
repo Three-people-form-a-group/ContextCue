@@ -14,6 +14,8 @@ export struct CourseDetailSheet {
   onClose: () => void = () => {};
   onEdit: () => void = () => {};
   onDelete: () => void = () => {};
+  /** 只调整这一周这次课的上课提醒（不改课程表） */
+  onAdjustThis: () => void = () => {};
 
   /** 周次压缩显示：1-16 周 / 1-16 周（单周）/ 1、3、5 周 */
   private formatWeeks(weeks: number[]): string {
@@ -121,6 +123,17 @@ export struct CourseDetailSheet {
         this.MetaRow('时间', `${this.course.startTime} – ${this.course.endTime}`)
         this.Divider()
         this.MetaRow('周次', this.formatWeeks(this.course.weeks))
+
+        Text('只调整这次的上课提醒（不改课程表）')
+          .fontSize(StyleConstants.FONT_BODY_SM)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.ink(this.uiMode))
+          .decoration({ type: TextDecorationType.Underline })
+          .height(StyleConstants.TOUCH_TARGET_MIN)
+          .margin({ top: StyleConstants.SPACE_SM })
+          .onClick(() => {
+            this.onAdjustThis();
+          })
 
         // 编辑 / 删除
         Row({ space: StyleConstants.SPACE_MD }) {

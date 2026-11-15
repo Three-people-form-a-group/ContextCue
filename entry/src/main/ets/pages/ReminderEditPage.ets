@@ -473,9 +473,17 @@ export struct ReminderEditPage {
       ? await services.reminderService.create(input)
       : await services.reminderService.update(this.originalId, input);
     if (!result.success) {
-      this.saveError = result.error === undefined ? '保存失败' : result.error.message;
-      if (result.error !== undefined && result.error.code === 'TRIGGER_REGISTRATION_ERROR') {
-        this.saveError += '（到点提醒需要通知权限，请先在系统设置中允许 ContextCue 的通知）';
+      if (result.error === undefined) {
+        this.saveError = '保存失败';
+      } else if (result.error.code === 'MISSING_SCENE_ID') {
+        // 地点提醒需要一个已记录的地点，手动输入的新名字暂时还不能直接用
+        this.saveError = '这个地点还没有被记录，暂时不能用于地点提醒';
+      } else if (result.error.code === 'TRIGGER_REGISTRATION_ERROR') {
+        this.saveError = this.typeSel === TriggerType.TIME
+          ? `${result.error.message}（到点提醒需要通知权限，请先在系统设置中允许 ContextCue 的通知）`
+          : `${result.error.message}（地点提醒需要位置权限，请先在系统设置中允许 ContextCue 的位置权限）`;
+      } else {
+        this.saveError = result.error.message;
       }
       return;
     }

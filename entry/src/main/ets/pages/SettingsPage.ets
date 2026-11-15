@@ -4,6 +4,8 @@ import { Theme } from '../common/Theme';
 import { TopBar } from '../components/TopBar';
 import { getAppServices } from '../app/AppServiceRegistry';
 import { AppRuntimeMode } from '../app/AppServices';
+import { notificationManager } from '@kit.NotificationKit';
+import { common } from '@kit.AbilityKit';
 
 /**
  * 设置页 —— 整份报纸的「出版说明」（COLOPHON）。
@@ -102,6 +104,24 @@ export struct SettingsPage {
   /** 作为底部 Tab 使用时隐藏返回按钮 */
   @Prop showBack: boolean = true;
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
+  /** 系统通知是否已开启（提醒代理发布的前提） */
+  @State notificationEnabled: boolean = true;
+
+  aboutToAppear(): void {
+    this.notificationEnabled = notificationManager.isNotificationEnabledSync();
+  }
+
+  /** 打开系统通知授权；回到设置页时再同步一次状态 */
+  private async askNotification(): Promise<void> {
+    if (this.notificationEnabled) {
+      return;
+    }
+    try {
+      await notificationManager.requestEnableNotification(getContext(this) as common.UIAbilityContext);
+    } catch (_) {
+    }
+    this.notificationEnabled = notificationManager.isNotificationEnabledSync();
+  }
 
   build() {
     Column() {
@@ -265,10 +285,36 @@ export struct SettingsPage {
     Column() {
       this.SectionHeader('01', '提醒偏好')
       Column() {
-        SettingToggleRow({
-          label: '提醒通知',
-          desc: '到点后通过系统通知提醒（占位开关）',
-          initialOn: true
+        Row({ space: StyleConstants.SPACE_MD }) {
+          Column({ space: 2 }) {
+            Text('系统通知')
+              .fontSize(StyleConstants.FONT_BODY)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Text(this.notificationEnabled
+              ? '已开启：到点由系统提醒代理弹出通知'
+              : '未开启：到点不会提醒，点这里去开启')
+              .fontSize(StyleConstants.FONT_SECTION_INDEX)
+              .fontColor(this.notificationEnabled ? Theme.sub(this.uiMode) : Theme.alert(this.uiMode))
+              .maxLines(2)
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Text(this.notificationEnabled ? '已开启' : '去开启')
+            .fontSize(StyleConstants.FONT_BODY)
+            .fontWeight(900)
+            .fontColor(this.notificationEnabled ? $r('app.color.text_primary') : Theme.alert(this.uiMode))
+            .maxLines(1)
+        }
+        .width('100%')
+        .padding({
+          top: StyleConstants.SPACE_MD,
+          bottom: StyleConstants.SPACE_MD
+        })
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.askNotification();
         })
         this.Rule()
         SettingValueRow({

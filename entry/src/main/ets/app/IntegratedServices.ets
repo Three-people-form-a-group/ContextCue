@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AIProviderConfig } from '../ai/provider/AIProviderConfig';
 import { FakeAIModelProvider } from '../ai/provider/FakeAIModelProvider';
 import { OhosAIChatClient } from '../ai/provider/OhosAIChatClient';
@@ -47,7 +48,7 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     ? new FakeAIModelProvider(new Map<string, string>())
     : new ZhipuAIModelProvider(config, new OhosAIChatClient());
 
-  return createAppServices({
+  const services = createAppServices({
     mode: AppRuntimeMode.INTEGRATED,
     repository: new InMemoryReminderRepository(),
     timetableRepository: new InMemoryTimetableRepository(),
@@ -64,4 +65,7 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     now: now,
     newId: newId
   });
+  hilog.info(0x0000, 'ContextCue', 'AI provider: %{public}s',
+    config === undefined ? 'Fake(dev fixtures)' : 'Zhipu(GLM)');
+  return services;
 }

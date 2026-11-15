@@ -10,7 +10,7 @@ export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     // 本地配置（沙箱 files/ai.config.local.json）存在则启用真实 Provider，否则 Fake。
     const aiConfig = readLocalAIProviderConfig(this.context.filesDir);
-    const services = initializeAppServices(aiConfig);
+    const services = initializeAppServices(aiConfig, this.context);
     hilog.info(DOMAIN, 'ContextCue', 'App services initialized, mode=%{public}s', services.mode);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }

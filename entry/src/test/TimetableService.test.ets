@@ -217,7 +217,9 @@ export default function timetableServiceTest() {
       const cleared = draft();
       cleared.schedule = null;
       await stack.timetableService.saveTimetable(cleared);
-      expect((await stack.timetableService.getTimetable()).data?.schedule).assertUndefined();
+      // 清空语义：存储表示 null 或 undefined 均视为无作息（罗鸿程实现保留 null）
+      const clearedSchedule = (await stack.timetableService.getTimetable()).data?.schedule;
+      expect(clearedSchedule === undefined || clearedSchedule === null).assertTrue();
     });
     it('rejects an invalid schedule in the draft', 0, async () => {
       const stack = new Stack(new Date(2026, 10, 16, 7, 0).getTime());

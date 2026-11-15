@@ -51,6 +51,8 @@ export class SystemNotificationPort implements ReminderNotificationPort {
     const request: notificationManager.NotificationRequest = {
       id: requestCode,
       wantAgent: agent,
+      // 服务类通知：允许横幅/声音，按用户的对应开关生效
+      slotType: notificationManager.SlotType.SERVICE_INFORMATION,
       content: {
         notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
         normal: {

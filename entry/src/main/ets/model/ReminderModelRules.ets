@@ -32,8 +32,6 @@ export function validateCreateReminderInput(input: CreateReminderInput, now: num
       errors.push(inputError('MISSING_TRIGGER_TIME', '请选择触发时间', 'triggerTime'));
     } else if (!Number.isFinite(input.triggerTime)) {
       errors.push(inputError('INVALID_TRIGGER_TIME', '触发时间无效', 'triggerTime'));
-    } else if (input.triggerTime < now) {
-      errors.push(inputError('PAST_TRIGGER_TIME', '触发时间不能早于当前时间', 'triggerTime'));
     }
   }
 
@@ -61,6 +59,10 @@ export function canTransitionReminderStatus(current: ReminderStatus, next: Remin
   }
   if (current === ReminderStatus.TRIGGERED) {
     return next === ReminderStatus.COMPLETED;
+  }
+  if (current === ReminderStatus.COMPLETED) {
+    // 允许撤销完成（回到待办）；其他转出仍然禁止
+    return next === ReminderStatus.ACTIVE;
   }
   return false;
 }

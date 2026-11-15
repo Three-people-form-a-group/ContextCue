@@ -130,7 +130,7 @@ export default function reminderModelTest() {
       expect(errors[0].retryable).assertFalse();
     });
 
-    it('rejects missing invalid and past times', 0, () => {
+    it('rejects missing and invalid times but allows past times', 0, () => {
       const input: CreateReminderInput = { content: 'a', triggerType: TriggerType.TIME, source: ReminderSource.MANUAL };
       expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('MISSING_TRIGGER_TIME');
       input.triggerTime = Number.NaN;
@@ -139,8 +139,9 @@ export default function reminderModelTest() {
       expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('INVALID_TRIGGER_TIME');
       input.triggerTime = Number.NEGATIVE_INFINITY;
       expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('INVALID_TRIGGER_TIME');
+      // 2026-11-15 起允许记录过去的时间，不再拦截
       input.triggerTime = 999;
-      expect(validateCreateReminderInput(input, 1000)[0].code).assertEqual('PAST_TRIGGER_TIME');
+      expect(validateCreateReminderInput(input, 1000).length).assertEqual(0);
     });
 
     it('requires a nonblank scene id even when a scene name exists', 0, () => {
@@ -189,11 +190,11 @@ export default function reminderModelTest() {
       expect(canTransitionReminderStatus(ReminderStatus.DISABLED, ReminderStatus.TRIGGERED)).assertFalse();
     });
 
-    it('keeps triggered and completed statuses terminal as specified', 0, () => {
+    it('allows undoing completion but keeps triggered terminal', 0, () => {
       expect(canTransitionReminderStatus(ReminderStatus.TRIGGERED, ReminderStatus.COMPLETED)).assertTrue();
       expect(canTransitionReminderStatus(ReminderStatus.TRIGGERED, ReminderStatus.ACTIVE)).assertFalse();
       expect(canTransitionReminderStatus(ReminderStatus.TRIGGERED, ReminderStatus.DISABLED)).assertFalse();
-      expect(canTransitionReminderStatus(ReminderStatus.COMPLETED, ReminderStatus.ACTIVE)).assertFalse();
+      expect(canTransitionReminderStatus(ReminderStatus.COMPLETED, ReminderStatus.ACTIVE)).assertTrue();
       expect(canTransitionReminderStatus(ReminderStatus.COMPLETED, ReminderStatus.TRIGGERED)).assertFalse();
       expect(canTransitionReminderStatus(ReminderStatus.COMPLETED, ReminderStatus.DISABLED)).assertFalse();
     });

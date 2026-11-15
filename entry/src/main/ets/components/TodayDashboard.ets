@@ -202,6 +202,15 @@ export struct TodayDashboard {
     return formatGap(this.activeItems()[prevIndex], this.activeItems()[index]);
   }
 
+  /** 今天已经过时刻、但还没完成：今日页内标红（跨天的归日程页逾期区） */
+  private isDueOverdue(item: Reminder): boolean {
+    const t: number | undefined = item.triggerTime;
+    if (t === undefined || isCompleted(item) || this.todayStartMs <= 0) {
+      return false;
+    }
+    return t < Date.now() && t >= this.todayStartMs;
+  }
+
   private noShort(index: number): string {
     const n: number = index + 1;
     return n < 10 ? `0${n}` : `${n}`;
@@ -551,15 +560,25 @@ export struct TodayDashboard {
   SlipRow(item: Reminder, index: number) {
     Column() {
     Row({ space: 12 }) {
-      Text(reminderTimeText(item))
-        .fontFamily('serif')
-        .fontSize(16)
-        .fontWeight(900)
-        .fontColor(isCompleted(item) ? Theme.rule(this.uiMode) : Theme.sub(this.uiMode))
-        .width(48)
-        .textAlign(TextAlign.End)
-        .maxLines(1)
-        .padding({ top: 5 })
+      Column({ space: 1 }) {
+        Text(reminderTimeText(item))
+          .fontFamily('serif')
+          .fontSize(16)
+          .fontWeight(900)
+          .fontColor(isCompleted(item)
+            ? Theme.rule(this.uiMode)
+            : (this.isDueOverdue(item) ? Theme.alert(this.uiMode) : Theme.sub(this.uiMode)))
+          .maxLines(1)
+        if (this.isDueOverdue(item)) {
+          Text('已超时')
+            .fontSize(8)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.alert(this.uiMode))
+        }
+      }
+      .width(48)
+      .alignItems(HorizontalAlign.End)
+      .padding({ top: 5 })
 
       Column({ space: 3 }) {
         Text(item.content)
@@ -614,12 +633,23 @@ export struct TodayDashboard {
           .fontWeight(FontWeight.Bold)
           .fontColor(Theme.alert(this.uiMode))
           .letterSpacing(2)
+        if (this.isDueOverdue(item)) {
+          Text('已超时')
+            .fontSize(9)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.alert(this.uiMode))
+            .padding({ left: 4, right: 4 })
+            .border({ width: 1, color: Theme.alert(this.uiMode) })
+            .borderRadius(3)
+        }
         Blank()
         Text(reminderTimeText(item))
           .fontFamily('serif')
           .fontSize(14)
           .fontWeight(900)
-          .fontColor(Theme.sub(this.uiMode))
+          .fontColor(this.isDueOverdue(item)
+            ? Theme.alert(this.uiMode)
+            : Theme.sub(this.uiMode))
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -666,10 +696,14 @@ export struct TodayDashboard {
         .width(24)
         .height(24)
         .borderRadius(12)
-        .backgroundColor(this.completingId === item.id ? Theme.ink(this.uiMode) : Color.Transparent)
+        .backgroundColor(isCompleted(item) || this.completingId === item.id
+          ? Theme.ink(this.uiMode)
+          : Color.Transparent)
         .border({
           width: 1.2,
-          color: this.completingId === item.id ? Theme.ink(this.uiMode) : Theme.rule(this.uiMode)
+          color: isCompleted(item) || this.completingId === item.id
+            ? Theme.ink(this.uiMode)
+            : Theme.rule(this.uiMode)
         })
         .scale({
           x: this.completingId === item.id ? 1.12 : 1,
@@ -678,20 +712,38 @@ export struct TodayDashboard {
       Text('✓')
         .fontSize(11)
         .fontWeight(900)
-        .fontColor(this.completingId === item.id
+        .fontColor(isCompleted(item) || this.completingId === item.id
           ? Theme.surface(this.uiMode)
           : Theme.sub(this.uiMode))
-        .opacity(this.completingId === item.id ? 1 : 0.5)
+        .opacity(isCompleted(item) || this.completingId === item.id ? 1 : 0.5)
         .scale({
-          x: this.completingId === item.id ? 1 : 0.6,
-          y: this.completingId === item.id ? 1 : 0.6
+          x: isCompleted(item) || this.completingId === item.id ? 1 : 0.6,
+          y: isCompleted(item) || this.completingId === item.id ? 1 : 0.6
         })
     }
     .width(32)
     .height(32)
     .onClick(() => {
-      this.playComplete(item);
+      // 已完成 → 取消完成；未完成 → 播放打勾动画后完成
+      if (isCompleted(item)) {
+        this.restoreItem(item);
+      } else {
+        this.playComplete(item);
+      }
     })
+  }
+
+  /** 取消完成：回到待办；时间已过的会落到逾期区 */
+  private async restoreItem(item: Reminder): Promise<void> {
+    const result = await getAppServices().reminderService.enable(item.id);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '取消完成失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    this.getUIContext().getPromptAction().showToast({ message: '已恢复为待办' });
   }
 
   /** 先播动画再提交：圆圈填墨、勾从 0.6 弹到 1，约 180ms 后写入服务 */
@@ -798,8 +850,17 @@ export struct TodayDashboard {
               .width('100%')
               .alignItems(HorizontalAlign.Start)
 
-              // 便签右上角的完成圈；不吃其它触摸
-              Row() {
+              // 便签顶部：左边超时标记，右边完成圈；不吃其它触摸
+              Row({ space: 6 }) {
+                if (this.isDueOverdue(item)) {
+                  Text('已超时')
+                    .fontSize(9)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(Theme.alert(this.uiMode))
+                    .padding({ left: 5, right: 5, top: 2, bottom: 2 })
+                    .border({ width: 1, color: Theme.alert(this.uiMode) })
+                    .borderRadius(3)
+                }
                 Blank()
                 this.DoneCircle(item)
               }
@@ -868,13 +929,19 @@ export struct TodayDashboard {
         .alignItems(VerticalAlign.Center)
 
         ForEach(this.doneItems(), (item: Reminder) => {
-          ReminderCard({
-            data: item,
-            role: SlipRole.ARCHIVE,
-            onCardClick: () => {
-              this.goDetail(item);
-            }
-          })
+          Row() {
+            ReminderCard({
+              data: item,
+              role: SlipRole.ARCHIVE,
+              onCardClick: () => {
+                this.goDetail(item);
+              }
+            })
+            .layoutWeight(1)
+            this.DoneCircle(item)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
         }, (item: Reminder) => `${this.dataVersion}-${this.paperVersion}-${reminderRenderKey(item)}` +
             `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
             `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
@@ -905,7 +972,7 @@ export struct TodayDashboard {
         .lineHeight(24)
         .fontColor(isCompleted(item)
           ? $r('app.color.text_secondary')
-          : $r('app.color.text_primary'))
+          : (this.isDueOverdue(item) ? Theme.alert(this.uiMode) : $r('app.color.text_primary')))
         .width(StyleConstants.TIMELINE_TIME_GUTTER)
         .textAlign(TextAlign.End)
         .maxLines(1)

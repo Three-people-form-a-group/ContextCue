@@ -160,16 +160,15 @@ export default function aiWorkflowIntegrationTest() {
       expect((await w.service.findById('ai-1')).data?.triggeredAt).assertEqual(2100);
     });
 
-    it('rejects a draft whose time expired while the user was confirming', 0, async () => {
+    it('allows a draft whose time expired while the user was confirming', 0, async () => {
       const w = new Workflow('{"content":"带电脑","triggerType":"TIME","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":null,"ambiguous":false}');
       const parsed = await w.parse();
       if (parsed.draft === undefined) { throw new Error('Expected draft'); }
       w.now = 3000;
       const created = await w.service.create(parsed.draft);
-      expect(created.success).assertFalse();
-      expect(created.error?.code).assertEqual('PAST_TRIGGER_TIME');
-      expect((await w.repository.findAll()).length).assertEqual(0);
-      expect(w.time.scheduled.length).assertEqual(0);
+      // 2026-11-15 起允许记录过去时间：保存成功，进入待办（逾期）而不是被拒绝
+      expect(created.success).assertTrue();
+      expect((await w.repository.findAll()).length).assertEqual(1);
     });
 
     it('does not persist unresolved or malformed AI responses', 0, async () => {

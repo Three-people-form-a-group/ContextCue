@@ -347,6 +347,18 @@ export struct ReminderDetailPage {
           .fontSize(13)
           .fontWeight(FontWeight.Bold)
           .fontColor(Theme.sub(this.uiMode))
+        Blank()
+        Text('标记未完成')
+          .fontSize(11)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.ink(this.uiMode))
+          .decoration({ type: TextDecorationType.Underline })
+          .height(StyleConstants.TOUCH_TARGET_MIN)
+          .padding({ left: 8, right: 8 })
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.restoreReminder();
+          })
       }
       .width('100%')
       .padding({ top: 8, bottom: 8 })
@@ -466,6 +478,20 @@ export struct ReminderDetailPage {
       color: $r('app.color.detail_ink'),
       style: BorderStyle.Dashed
     })
+  }
+
+  /** 取消完成：恢复成待办（时间已过的会落到逾期区） */
+  private async restoreReminder(): Promise<void> {
+    const result = await getAppServices().reminderService.enable(this.card.id);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '取消完成失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    await this.refreshFromStore();
+    this.getUIContext().getPromptAction().showToast({ message: '已恢复为待办' });
   }
 
   private async deleteReminder(): Promise<void> {

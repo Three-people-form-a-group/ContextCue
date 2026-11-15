@@ -340,18 +340,6 @@ export struct ReminderEditPage {
     });
   }
 
-  private showPastTimeWarning(): void {
-    this.getUIContext().getPromptAction().showDialog({
-      title: '时间已经过去',
-      message: '所选时间早于当前时间，请重新选择日期或时间后再保存。',
-      buttons: [
-        { text: '知道了', color: $r('app.color.detail_ink') }
-      ]
-    }).then(() => {
-    }).catch(() => {
-    });
-  }
-
   private applyManualInput(): void {
     const result: TimeParseResult = parseTimeInput(this.manualInput, Date.now());
     if (!result.ok) {
@@ -392,12 +380,6 @@ export struct ReminderEditPage {
       this.saveError = '请填写地点名称';
       return;
     }
-    if (this.timeRelevant() && this.isPastSelected()) {
-      this.saveError = '所选时间已过去，请重新选择';
-      this.showPastTimeWarning();
-      return;
-    }
-
     const input: CreateReminderInput = {
       content: content,
       triggerType: this.typeSel,
@@ -406,7 +388,29 @@ export struct ReminderEditPage {
       sceneName: this.typeSel === TriggerType.TIME ? undefined : this.sceneInput.trim(),
       source: this.sourceFromAi ? ReminderSource.AI : this.originalSource
     };
+    if (this.timeRelevant() && this.isPastSelected()) {
+      // 2026-11-15 起允许记录过去的时间：只提醒，不拦截
+      this.confirmPastSave(input);
+      return;
+    }
     this.submit(input);
+  }
+
+  /** 过去时间保存前的确认：允许记录已经发生/错过的事 */
+  private confirmPastSave(input: CreateReminderInput): void {
+    this.getUIContext().getPromptAction().showDialog({
+      title: '时间已经过去',
+      message: '所选时间早于当前时间。仍然保存这条提醒吗？它会出现在逾期列表里。',
+      buttons: [
+        { text: '取消', color: $r('app.color.text_secondary') },
+        { text: '仍然保存', color: $r('app.color.detail_ink') }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        this.submit(input);
+      }
+    }).catch(() => {
+    });
   }
 
   /** 新建 / 更新统一走 ReminderService；id、状态与时间戳由服务生成或保留 */

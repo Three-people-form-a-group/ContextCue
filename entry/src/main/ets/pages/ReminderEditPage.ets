@@ -191,6 +191,26 @@ export struct ReminderEditPage {
    * 区块编号统一由这里算：按固定顺序累加"可见"区块，
    * 隐藏的区块不占号，避免出现 01 02 03 03 这种重复。
    */
+  /** 区块颜色：极简统一近黑；手账按区块区分，相邻区块不重色 */
+  private sectionColor(kind: string): ResourceColor {
+    if (this.uiMode !== UiMode.JOURNAL) {
+      return Theme.text(this.uiMode);
+    }
+    if (kind === 'nl') {
+      return $r('app.color.accent_mint');
+    }
+    if (kind === 'content') {
+      return $r('app.color.accent_coral');
+    }
+    if (kind === 'trigger') {
+      return $r('app.color.accent_sky');
+    }
+    if (kind === 'time') {
+      return $r('app.color.accent_mustard');
+    }
+    return $r('app.color.accent_sage');
+  }
+
   private sectionNo(kind: string): string {
     let n: number = 0;
     n += 1;
@@ -542,26 +562,26 @@ export struct ReminderEditPage {
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 悬挂大编号 */
+  /** 悬挂大编号：编号和颜色都在 builder 内按 kind 计算，切换提醒方式时不会残留旧值 */
   @Builder
-  SectionNumber(no: string, color: ResourceColor) {
-    Text(no)
+  SectionNumber(kind: string) {
+    Text(this.sectionNo(kind))
       .fontSize(StyleConstants.FONT_DISPLAY)
       .fontWeight(900)
-      .fontColor(color)
+      .fontColor(this.sectionColor(kind))
       .opacity(0.30)
       .width(48)
   }
 
   /** 栏目标题 + 中粗线 */
   @Builder
-  SectionHead(title: string, color: ResourceColor) {
+  SectionHead(title: string, kind: string) {
     Column({ space: StyleConstants.SPACE_XS }) {
       Row({ space: StyleConstants.SPACE_SM }) {
         Column()
           .width(3)
           .height(14)
-          .backgroundColor(color)
+          .backgroundColor(this.sectionColor(kind))
         Text(title)
           .fontSize(StyleConstants.FONT_TITLE_LG)
           .fontWeight(900)
@@ -626,9 +646,9 @@ export struct ReminderEditPage {
   @Builder
   NlSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber(this.sectionNo('nl'), this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
+      this.SectionNumber('nl')
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('自然语言解析', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
+        this.SectionHead('自然语言解析', 'nl')
 
         TextArea({
           placeholder: '例如：明天下午五点去图书馆还书',
@@ -691,9 +711,9 @@ export struct ReminderEditPage {
   @Builder
   ContentSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber(this.sectionNo('content'), this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
+      this.SectionNumber('content')
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('提醒内容', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
+        this.SectionHead('提醒内容', 'content')
 
         TextArea({
           placeholder: '输入提醒内容',
@@ -730,9 +750,9 @@ export struct ReminderEditPage {
   @Builder
   TimeSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber(this.sectionNo('time'), this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
+      this.SectionNumber('time')
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('日期与时间', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
+        this.SectionHead('日期与时间', 'time')
         FormItem({
           label: '日期',
           value: this.dateLabel(),
@@ -822,9 +842,9 @@ export struct ReminderEditPage {
   @Builder
   TriggerSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber(this.sectionNo('trigger'), this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
+      this.SectionNumber('trigger')
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('提醒方式', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
+        this.SectionHead('提醒方式', 'trigger')
 
         Row({ space: 8 }) {
           this.TypeChip('时间', TriggerType.TIME)
@@ -878,10 +898,9 @@ export struct ReminderEditPage {
   @Builder
   PlaceSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber(this.sectionNo('place'),
-        this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sage') : Theme.text(this.uiMode))
+      this.SectionNumber('place')
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('地点', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sage') : Theme.text(this.uiMode))
+        this.SectionHead('地点', 'place')
 
         TextInput({
           placeholder: '地点名称，例如 家 / 公司',

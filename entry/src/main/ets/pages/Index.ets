@@ -4,6 +4,9 @@ import { UiMode } from '../common/UiMode';
 import { PaperStore } from '../common/PaperStore';
 import { DraftStore } from '../common/DraftStore';
 import { RefreshSignal } from '../common/RefreshSignal';
+import { notificationManager } from '@kit.NotificationKit';
+import { preferences } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
 import { Theme } from '../common/Theme';
 import { TodayDashboard } from '../components/TodayDashboard';
 import { ReminderListPage } from './ReminderListPage';
@@ -35,6 +38,7 @@ struct Index {
     PaperStore.init(getContext(this));
     DraftStore.init(getContext(this));
     RefreshSignal.ensure();
+    this.ensureNotificationPermission();
   }
 
   /**
@@ -82,6 +86,24 @@ struct Index {
         SettingsPage({ pathStack: this.pathStack })
       }
       .hideTitleBar(true)
+    }
+  }
+
+  /** 首次启动时引导开启通知（只问一次）；提醒靠系统通知展示，关闭就收不到 */
+  private async ensureNotificationPermission(): Promise<void> {
+    try {
+      if (notificationManager.isNotificationEnabledSync()) {
+        return;
+      }
+      const prefs = await preferences.getPreferences(getContext(this), 'contextcue_ui');
+      const asked = await prefs.get('notifyAsked', false) as boolean;
+      if (asked) {
+        return;
+      }
+      await prefs.put('notifyAsked', true);
+      await prefs.flush();
+      await notificationManager.requestEnableNotification(getContext(this) as common.UIAbilityContext);
+    } catch (_) {
     }
   }
 

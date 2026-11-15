@@ -1,5 +1,6 @@
 import { reminderAgentManager } from '@kit.BackgroundTasksKit';
 import { Reminder } from '../../model/Reminder';
+import { NotifyPref } from '../../common/NotifyPref';
 import { TimeTriggerPort } from '../contract/TimeTriggerPort';
 
 /** 应用包名与入口 Ability：提醒代理需要用它拉起应用 */
@@ -27,6 +28,10 @@ export class ReminderAgentTimePort implements TimeTriggerPort {
   }
 
   async schedule(reminder: Reminder): Promise<void> {
+    // 应用内「到点提醒」关闭时不再排期（用户在设置里主动关掉的）
+    if (!NotifyPref.enabled()) {
+      return;
+    }
     if (reminder.triggerTime === undefined) {
       // 纯地点提醒没有时间，交给 LocationTriggerPort
       return;

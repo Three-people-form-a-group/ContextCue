@@ -4,6 +4,7 @@ import { UiMode } from '../common/UiMode';
 import { PaperStore } from '../common/PaperStore';
 import { DraftStore } from '../common/DraftStore';
 import { RefreshSignal } from '../common/RefreshSignal';
+import { NotifyPref } from '../common/NotifyPref';
 import { notificationManager } from '@kit.NotificationKit';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
@@ -38,6 +39,7 @@ struct Index {
     PaperStore.init(getContext(this));
     DraftStore.init(getContext(this));
     RefreshSignal.ensure();
+    NotifyPref.load(getContext(this));
     this.ensureNotificationPermission();
   }
 

@@ -6,6 +6,10 @@ import { getAppServices } from '../app/AppServiceRegistry';
 import { AppRuntimeMode } from '../app/AppServices';
 import { notificationManager } from '@kit.NotificationKit';
 import { common } from '@kit.AbilityKit';
+import { reminderAgentManager } from '@kit.BackgroundTasksKit';
+import { NotifyPref } from '../common/NotifyPref';
+import { ReminderStatus, TriggerType } from '../model/ReminderEnums';
+import { CreateReminderInput } from '../model/CreateReminderInput';
 
 /**
  * 设置页 —— 整份报纸的「出版说明」（COLOPHON）。
@@ -106,9 +110,67 @@ export struct SettingsPage {
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
   /** 系统通知是否已开启（提醒代理发布的前提） */
   @State notificationEnabled: boolean = true;
+  /** 应用内「到点提醒」开关 */
+  @State notifyOn: boolean = true;
 
   aboutToAppear(): void {
     this.notificationEnabled = notificationManager.isNotificationEnabledSync();
+    this.notifyOn = NotifyPref.enabled();
+  }
+
+  /** 开关切换：关掉时清掉已排期的系统提醒；打开时补排现有待办 */
+  private async toggleNotify(on: boolean): Promise<void> {
+    if (!on) {
+      this.notifyOn = false;
+      await NotifyPref.save(getContext(this), false);
+      try {
+        await reminderAgentManager.cancelAllReminders();
+      } catch (_) {
+      }
+      this.getUIContext().getPromptAction().showToast({ message: '已关闭到点提醒' });
+      return;
+    }
+    // 打开前先确认系统通知权限
+    this.notificationEnabled = notificationManager.isNotificationEnabledSync();
+    if (!this.notificationEnabled) {
+      await this.askNotification();
+      this.notificationEnabled = notificationManager.isNotificationEnabledSync();
+      if (!this.notificationEnabled) {
+        this.notifyOn = false;
+        this.getUIContext().getPromptAction().showToast({ message: '需要先允许 ContextCue 的通知' });
+        return;
+      }
+    }
+    this.notifyOn = true;
+    await NotifyPref.save(getContext(this), true);
+    await this.rescheduleActive();
+    this.getUIContext().getPromptAction().showToast({ message: '已开启到点提醒' });
+  }
+
+  /** 重新把当前待办排进系统提醒代理（只排未来的时间提醒） */
+  private async rescheduleActive(): Promise<void> {
+    const services = getAppServices();
+    const result = await services.reminderService.findAll();
+    if (result.success && result.data !== undefined) {
+      for (let i = 0; i < result.data.length; i++) {
+        const r = result.data[i];
+        if (r.status !== ReminderStatus.ACTIVE || r.triggerType === TriggerType.LOCATION ||
+          r.triggerTime === undefined || r.triggerTime <= Date.now()) {
+          continue;
+        }
+        const input: CreateReminderInput = {
+          content: r.content,
+          triggerType: r.triggerType,
+          triggerTime: r.triggerTime,
+          sceneId: r.sceneId,
+          sceneName: r.sceneName,
+          locationTriggerMode: r.locationTriggerMode,
+          source: r.source
+        };
+        await services.reminderService.update(r.id, input);
+      }
+    }
+    await services.timetableService.ensureUpcomingReminders();
   }
 
   /** 打开系统通知授权；回到设置页时再同步一次状态 */
@@ -287,25 +349,29 @@ export struct SettingsPage {
       Column() {
         Row({ space: StyleConstants.SPACE_MD }) {
           Column({ space: 2 }) {
-            Text('系统通知')
+            Text('到点提醒')
               .fontSize(StyleConstants.FONT_BODY)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
-            Text(this.notificationEnabled
-              ? '已开启：到点由系统提醒代理弹出通知'
-              : '未开启：到点不会提醒，点这里去开启')
+            Text(this.notifyOn
+              ? (this.notificationEnabled
+                ? '到点由系统提醒代理弹出通知'
+                : '系统通知未开启，点这里去开启')
+              : '已关闭：不会再排入系统提醒')
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
-              .fontColor(this.notificationEnabled ? Theme.sub(this.uiMode) : Theme.alert(this.uiMode))
+              .fontColor(!this.notifyOn || this.notificationEnabled
+                ? Theme.sub(this.uiMode)
+                : Theme.alert(this.uiMode))
               .maxLines(2)
           }
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
 
-          Text(this.notificationEnabled ? '已开启' : '去开启')
-            .fontSize(StyleConstants.FONT_BODY)
-            .fontWeight(900)
-            .fontColor(this.notificationEnabled ? $r('app.color.text_primary') : Theme.alert(this.uiMode))
-            .maxLines(1)
+          Toggle({ type: ToggleType.Switch, isOn: this.notifyOn })
+            .selectedColor(Theme.accent(this.uiMode))
+            .onChange((isOn: boolean) => {
+              this.toggleNotify(isOn);
+            })
         }
         .width('100%')
         .padding({
@@ -313,15 +379,19 @@ export struct SettingsPage {
           bottom: StyleConstants.SPACE_MD
         })
         .alignItems(VerticalAlign.Center)
-        .onClick(() => {
-          this.askNotification();
-        })
+
+        if (this.notifyOn && !this.notificationEnabled) {
+          Text('点此允许系统通知 ›')
+            .fontSize(StyleConstants.FONT_SECTION_INDEX)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.alert(this.uiMode))
+            .height(StyleConstants.TOUCH_TARGET_MIN)
+            .onClick(() => {
+              this.askNotification();
+            })
+        }
         this.Rule()
-        SettingValueRow({
-          label: '免打扰时段',
-          desc: '该时段内不发送通知（占位）',
-          value: '22:00 – 07:00'
-        })
+        // 免打扰由系统统一管理，这里不再放一个不起作用的假设置
       }
       .width('100%')
       .padding({ left: 60 })

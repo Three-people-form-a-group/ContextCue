@@ -1,4 +1,7 @@
 import { FakeAIModelProvider } from '../ai/provider/FakeAIModelProvider';
+import { AIProviderConfig } from '../ai/provider/AIProviderConfig';
+import { OhosAIChatClient } from '../ai/provider/OhosAIChatClient';
+import { ZhipuAIModelProvider } from '../ai/provider/ZhipuAIModelProvider';
 import { Reminder } from '../model/Reminder';
 import { InMemoryReminderRepository } from '../repository/InMemoryReminderRepository';
 import { TimeTriggerPort } from '../reminder/contract/TimeTriggerPort';
@@ -30,8 +33,11 @@ class UnavailableNotificationPort implements ReminderNotificationPort {
   }
 }
 
-/** Explicit development composition: volatile data, no triggers/notifications, no real AI. */
-export function createDevelopmentServices(): AppServices {
+/**
+ * Development composition: volatile data, no triggers/notifications.
+ * config 提供时注入阶段性真实 Provider（智谱 GLM）；缺省保持 Fake。
+ */
+export function createDevelopmentServices(config?: AIProviderConfig): AppServices {
   const location = new DevelopmentLocationPort();
   let sequence = 0;
   return createAppServices({
@@ -42,7 +48,9 @@ export function createDevelopmentServices(): AppServices {
     notificationPort: new UnavailableNotificationPort(),
     sceneResolver: location,
     // No canned interpretation of arbitrary input. Unknown input returns a non-retryable provider error.
-    aiProvider: new FakeAIModelProvider(new Map<string, string>()),
+    aiProvider: config === undefined
+      ? new FakeAIModelProvider(new Map<string, string>())
+      : new ZhipuAIModelProvider(config, new OhosAIChatClient()),
     now: () => Date.now(),
     newId: () => 'dev-' + Date.now().toString() + '-' + (++sequence).toString()
   });

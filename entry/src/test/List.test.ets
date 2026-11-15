@@ -15,6 +15,7 @@ import aiEvalCorpusTest from './AIEvalCorpus.test';
 import timetableParseTest from './TimetableParse.test';
 import timetableServiceTest from './TimetableService.test';
 import appServicesTest from './AppServices.test';
+import zhipuAIProviderTest from './ZhipuAIProvider.test';
 
 export default function testsuite() {
   localUnitTest();
@@ -34,4 +35,5 @@ export default function testsuite() {
   timetableParseTest();
   timetableServiceTest();
   appServicesTest();
+  zhipuAIProviderTest();
 }

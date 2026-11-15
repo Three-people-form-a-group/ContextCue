@@ -853,13 +853,16 @@ export struct TodayDashboard {
               // 便签顶部：左边超时标记，右边完成圈；不吃其它触摸
               Row({ space: 6 }) {
                 if (this.isDueOverdue(item)) {
+                  // 手账：红色票根纹理，和其他贴纸/票根保持同一套语言
                   Text('已超时')
                     .fontSize(9)
-                    .fontWeight(FontWeight.Bold)
-                    .fontColor(Theme.alert(this.uiMode))
-                    .padding({ left: 5, right: 5, top: 2, bottom: 2 })
-                    .border({ width: 1, color: Theme.alert(this.uiMode) })
-                    .borderRadius(3)
+                    .fontWeight(900)
+                    .fontColor($r('app.color.archive_ink'))
+                    .letterSpacing(1)
+                    .padding({ left: 10, right: 10, top: 3, bottom: 3 })
+                    .backgroundImage($r('app.media.ticket_coral'))
+                    .backgroundImageSize({ width: '100%', height: '100%' })
+                    .rotate({ angle: -2 })
                 }
                 Blank()
                 this.DoneCircle(item)

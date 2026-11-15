@@ -10,6 +10,8 @@ import { ReminderNotificationPort } from '../reminder/contract/ReminderNotificat
 import { SceneResolver } from '../reminder/contract/SceneResolver';
 import { TriggerConditionEvent } from '../reminder/contract/TriggerConditionEvent';
 import { TriggerEventSink } from '../reminder/contract/TriggerEventSink';
+import { TimetableService } from '../timetable/TimetableService';
+import { TimetableRepository } from '../timetable/repository/TimetableRepository';
 
 export enum AppRuntimeMode {
   DEVELOPMENT = 'DEVELOPMENT',
@@ -21,6 +23,7 @@ export enum AppRuntimeMode {
 export interface AppServices {
   readonly reminderService: ReminderService;
   readonly aiService: AIService;
+  readonly timetableService: TimetableService;
   readonly mode: AppRuntimeMode;
 }
 
@@ -28,6 +31,7 @@ export interface AppServices {
 export interface AppServiceDependencies {
   mode: AppRuntimeMode;
   repository: ReminderRepository;
+  timetableRepository: TimetableRepository;
   createTimePort: (sink: TriggerEventSink) => TimeTriggerPort;
   createLocationPort: (sink: TriggerEventSink) => LocationTriggerPort;
   notificationPort: ReminderNotificationPort;
@@ -57,8 +61,9 @@ export function createAppServices(dependencies: AppServiceDependencies): AppServ
   const locationPort = dependencies.createLocationPort(events);
   const service = new ReminderService(dependencies.repository, timePort, locationPort,
     dependencies.now, dependencies.newId);
+  const timetableService = new TimetableService(dependencies.timetableRepository, service, dependencies.now);
   const coordinator = new TriggerCoordinator(service, locationPort, dependencies.notificationPort, dependencies.now);
   const aiService = new DefaultAIService(dependencies.aiProvider, dependencies.sceneResolver);
   events.bind(coordinator);
-  return { reminderService: service, aiService: aiService, mode: dependencies.mode };
+  return { reminderService: service, aiService: aiService, timetableService: timetableService, mode: dependencies.mode };
 }

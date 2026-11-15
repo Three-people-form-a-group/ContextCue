@@ -4,6 +4,7 @@ import { OhosAIChatClient } from '../ai/provider/OhosAIChatClient';
 import { ZhipuAIModelProvider } from '../ai/provider/ZhipuAIModelProvider';
 import { Reminder } from '../model/Reminder';
 import { InMemoryReminderRepository } from '../repository/InMemoryReminderRepository';
+import { InMemoryTimetableRepository } from '../timetable/repository/InMemoryTimetableRepository';
 import { TimeTriggerPort } from '../reminder/contract/TimeTriggerPort';
 import { LocationTriggerPort } from '../reminder/contract/LocationTriggerPort';
 import { ReminderNotificationPort } from '../reminder/contract/ReminderNotificationPort';
@@ -43,6 +44,7 @@ export function createDevelopmentServices(config?: AIProviderConfig): AppService
   return createAppServices({
     mode: AppRuntimeMode.DEVELOPMENT,
     repository: new InMemoryReminderRepository(),
+    timetableRepository: new InMemoryTimetableRepository(),
     createTimePort: (_sink: TriggerEventSink): TimeTriggerPort => new DevelopmentTimePort(),
     createLocationPort: (_sink: TriggerEventSink): LocationTriggerPort => location,
     notificationPort: new UnavailableNotificationPort(),

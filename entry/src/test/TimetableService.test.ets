@@ -206,5 +206,27 @@ export default function timetableServiceTest() {
       expect(all.data?.length).assertEqual(0);
       expect(stack.timePort.cancelled.length).assertEqual(4);
     });
+    it('stores schedule, keeps it on schedule-less re-imports, clears on explicit null', 0, async () => {
+      const stack = new Stack(new Date(2026, 10, 16, 7, 0).getTime());
+      const withSchedule = draft();
+      withSchedule.schedule = { firstStart: '08:00', duration: 45, breakMinutes: 10 };
+      await stack.timetableService.saveTimetable(withSchedule);
+      expect((await stack.timetableService.getTimetable()).data?.schedule?.firstStart).assertEqual('08:00');
+      await stack.timetableService.saveTimetable(draft());
+      expect((await stack.timetableService.getTimetable()).data?.schedule?.firstStart).assertEqual('08:00');
+      const cleared = draft();
+      cleared.schedule = null;
+      await stack.timetableService.saveTimetable(cleared);
+      expect((await stack.timetableService.getTimetable()).data?.schedule).assertUndefined();
+    });
+    it('rejects an invalid schedule in the draft', 0, async () => {
+      const stack = new Stack(new Date(2026, 10, 16, 7, 0).getTime());
+      const bad = draft();
+      bad.schedule = { firstStart: '08:00', duration: 0, breakMinutes: 10 };
+      const saved = await stack.timetableService.saveTimetable(bad);
+      expect(saved.success).assertFalse();
+      expect(saved.error?.code).assertEqual('TIMETABLE_INVALID_DRAFT');
+      expect((await stack.reminderService.findAll()).data?.length).assertEqual(0);
+    });
   });
 }

@@ -14,11 +14,33 @@ export interface CourseDraft {
   weeks: number[];
 }
 
+/** 单节手动覆盖：index 为第几节 */
+export interface ScheduleOverride {
+  index: number;
+  start: string;
+  end: string;
+}
+
+/** 作息（仅展示用）：决定周表怎么画行、午休/晚餐带放哪；不参与提醒生成链路。 */
+export interface TimetableSchedule {
+  firstStart: string;
+  duration: number;
+  breakMinutes: number;
+  lunchStart?: string;
+  lunchEnd?: string;
+  dinnerStart?: string;
+  dinnerEnd?: string;
+  overrides?: ScheduleOverride[];
+  locked?: number[];
+}
+
 export interface TimetableDraft {
   semesterName: string;
   /** 锚点日期 "YYYY-MM-DD"，该日期属于 anchorWeek 周 */
   anchorDate: string;
   anchorWeek: number;
+  /** 三态：undefined=沿用已存作息；null=清空；值=替换 */
+  schedule?: TimetableSchedule | null;
   courses: CourseDraft[];
 }
 
@@ -39,6 +61,8 @@ export interface StoredTimetable {
   anchorDate: string;
   anchorWeek: number;
   courses: StoredCourse[];
+  /** undefined = 未设置作息 */
+  schedule?: TimetableSchedule;
 }
 
 /** 一次"某课程某周"的上课实例与已创建提醒的对应关系（去重与级联删除的依据） */

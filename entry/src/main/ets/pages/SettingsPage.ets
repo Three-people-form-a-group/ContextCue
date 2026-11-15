@@ -8,6 +8,9 @@ import { notificationManager } from '@kit.NotificationKit';
 import { common } from '@kit.AbilityKit';
 import { reminderAgentManager } from '@kit.BackgroundTasksKit';
 import { NotifyPref } from '../common/NotifyPref';
+import { fileIo as fs } from '@kit.CoreFileKit';
+import { LOCAL_AI_CONFIG_FILENAME } from '../ai/provider/LocalAIConfigReader';
+import { AiConfigSheet } from '../components/AiConfigSheet';
 import { ReminderStatus, TriggerType } from '../model/ReminderEnums';
 import { CreateReminderInput } from '../model/CreateReminderInput';
 
@@ -112,10 +115,22 @@ export struct SettingsPage {
   @State notificationEnabled: boolean = true;
   /** 应用内「到点提醒」开关 */
   @State notifyOn: boolean = true;
+  /** AI 配置弹层与当前是否已配置 */
+  @State showAiConfig: boolean = false;
+  @State aiConfigured: boolean = false;
 
   aboutToAppear(): void {
     this.notificationEnabled = notificationManager.isNotificationEnabledSync();
     this.notifyOn = NotifyPref.enabled();
+    this.aiConfigured = this.aiConfigExists();
+  }
+
+  private aiConfigExists(): boolean {
+    try {
+      return fs.accessSync(`${getContext(this).filesDir}/${LOCAL_AI_CONFIG_FILENAME}`);
+    } catch (_) {
+      return false;
+    }
   }
 
   /** 开关切换：关掉时清掉已排期的系统提醒；打开时补排现有待办 */
@@ -197,6 +212,7 @@ export struct SettingsPage {
   }
 
   build() {
+    Stack({ alignContent: Alignment.Bottom }) {
     Column() {
       TopBar({
         title: '设置',
@@ -230,6 +246,18 @@ export struct SettingsPage {
     .width('100%')
     .height('100%')
     .backgroundColor(Theme.bg(this.uiMode))
+
+      if (this.showAiConfig) {
+        AiConfigSheet({
+          onClose: () => {
+            this.showAiConfig = false;
+            this.aiConfigured = this.aiConfigExists();
+          }
+        })
+      }
+    }
+    .width('100%')
+    .height('100%')
   }
 
   /** 界面模式：极简 / 手账 */
@@ -438,10 +466,36 @@ export struct SettingsPage {
     Column() {
       this.SectionHeader('03', 'AI 与辅助')
       Column() {
-        SettingToggleRow({
-          label: '智能建议',
-          desc: '根据自然语言生成时间与地点建议（占位开关）',
-          initialOn: false
+        Row({ space: StyleConstants.SPACE_MD }) {
+          Column({ space: 2 }) {
+            Text('AI 配置')
+              .fontSize(StyleConstants.FONT_BODY)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+            Text(this.aiConfigured
+              ? '已配置真实模型，重启应用后生效'
+              : '未配置：使用示例数据，可在编辑台体验解析三态')
+              .fontSize(StyleConstants.FONT_SECTION_INDEX)
+              .fontColor(Theme.sub(this.uiMode))
+              .maxLines(2)
+          }
+          .alignItems(HorizontalAlign.Start)
+          .layoutWeight(1)
+
+          Text(this.aiConfigured ? '修改 ›' : '去配置 ›')
+            .fontSize(StyleConstants.FONT_BODY)
+            .fontWeight(900)
+            .fontColor(Theme.accent(this.uiMode))
+            .maxLines(1)
+        }
+        .width('100%')
+        .padding({
+          top: StyleConstants.SPACE_MD,
+          bottom: StyleConstants.SPACE_MD
+        })
+        .alignItems(VerticalAlign.Center)
+        .onClick(() => {
+          this.showAiConfig = true;
         })
       }
       .width('100%')

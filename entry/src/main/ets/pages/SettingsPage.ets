@@ -178,17 +178,22 @@ export struct SettingsPage {
     if (this.notificationEnabled) {
       return;
     }
+    const context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
     try {
-      await notificationManager.requestEnableNotification(getContext(this) as common.UIAbilityContext);
+      await notificationManager.requestEnableNotification(context);
     } catch (_) {
     }
     this.notificationEnabled = notificationManager.isNotificationEnabledSync();
-    if (!this.notificationEnabled) {
-      // 系统仍不允许：常见于安装的是未签名开发包
-      this.getUIContext().getPromptAction().showToast({
-        message: '系统未允许本应用发送通知：请确认安装的是签名包（DevEco 自动签名）'
-      });
+    if (this.notificationEnabled) {
+      this.getUIContext().getPromptAction().showToast({ message: '已开启通知' });
+      return;
     }
+    // 系统弹窗没能开启时，直接带用户到本应用的通知设置页
+    try {
+      await notificationManager.openNotificationSettings(context);
+    } catch (_) {
+    }
+    this.getUIContext().getPromptAction().showToast({ message: '请在系统设置中允许 ContextCue 的通知' });
   }
 
   build() {
@@ -362,7 +367,7 @@ export struct SettingsPage {
             Text(this.notifyOn
               ? (this.notificationEnabled
                 ? '到点由系统提醒代理弹出通知'
-                : '系统通知未开启（未签名开发包无法开启），点这里尝试授权')
+                : '系统通知未开启：点这里去开启')
               : '已关闭：不会再排入系统提醒')
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
               .fontColor(!this.notifyOn || this.notificationEnabled

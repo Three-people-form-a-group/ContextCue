@@ -43,12 +43,13 @@ export default function zhipuAIProviderTest() {
       expect(nowText.startsWith('2')).assertTrue();
     });
     it('sends model, temperature and user text through the chat client', 0, async () => {
+      const fixture = '{"content":"带电脑","triggerType":"BOTH","triggerTime":"2026-11-16T14:00:00+08:00","sceneName":"实验室","ambiguous":false}';
       const client = new ScriptedChatClient((_request: AIChatRequest): AIChatResult => {
-        return { content: '{"content":"带电脑","triggerType":"BOTH","triggerTime":"2026-11-16T14:00:00+08:00","sceneName":"实验室","ambiguous":false}' };
+        return { content: fixture };
       });
       const provider = new ZhipuAIModelProvider(VALID_CONFIG, client);
       const result = await provider.requestParse('明天下午两点去实验室，提醒我带电脑', context);
-      expect(result.rawResponse).assertUndefined();
+      expect(result.rawResponse).assertEqual(fixture);
       expect(result.failure).assertUndefined();
     });
     it('exposes the captured request for prompt assertions', 0, async () => {

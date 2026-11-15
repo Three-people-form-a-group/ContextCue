@@ -4,9 +4,11 @@ import { Reminder } from '../model/Reminder';
 import { ReminderSource, ReminderStatus, TriggerType } from '../model/ReminderEnums';
 import { ReminderService } from '../service/ReminderService';
 import { computeCurrentWeek, formatCalendarDate, localDayCanonical, mondayOfWeek,
-  occurrenceEpochMs, parseCalendarDate, validateTimetableDraft } from './parse/TimetableDataParser';
+  occurrenceEpochMs, parseCalendarDate, validateTimetableDraft, validateTimetableSchedule
+} from './parse/TimetableDataParser';
 import { OccurrenceRecord, StoredCourse, StoredTimetable, TimetableDeleteSummary,
-  TimetableDraft, TimetableReminderSummary, TimetableSaveResult, TimetableSchedule, WeekInfo } from './model/TimetableTypes';
+  TimetableDraft, TimetableReminderSummary, TimetableSaveResult, TimetableSchedule,
+  WeekInfo } from './model/TimetableTypes';
 import { TimetableRepository } from './repository/TimetableRepository';
 
 function serviceError(code: string, message: string, retryable: boolean): OperationError {
@@ -83,9 +85,23 @@ export class TimetableService {
       return { success: false, error: serviceError('TIMETABLE_INVALID_DRAFT',
         `${first.message}${first.field === undefined ? '' : ': ' + first.field}`, false) };
     }
-    let previous: StoredTimetable | undefined;
+    if (draft.schedule !== undefined && draft.schedule !== null) {
+      const scheduleIssues = validateTimetableSchedule(draft.schedule);
+      if (scheduleIssues.length > 0) {
+        const first = scheduleIssues[0];
+        return { success: false, error: serviceError('TIMETABLE_INVALID_DRAFT',
+          `${first.message}${first.field === undefined ? '' : ': ' + first.field}`, false) };
+      }
+    }
+    // 作息三态：undefined=沿用已存、null=清空、对象=替换
+    let previous: StoredTimetable | undefined = undefined;
     try {
-      previous = await this.cascadeExisting();
+      previous = await this.repository.find();
+    } catch (_) {
+      previous = undefined;
+    }
+    try {
+      await this.cascadeExisting();
     } catch (_) {
       return { success: false, error: serviceError('TIMETABLE_STORE_ERROR', '旧课程表清理失败', true) };
     }
@@ -103,23 +119,22 @@ export class TimetableService {
         weeks: course.weeks
       });
     }
-    // 作息三态：draft 未带 → 沿用已存；显式 null → 清空；带值 → 替换。
-    let schedule: TimetableSchedule | undefined;
-    if (draft.schedule === undefined) {
-      schedule = previous === undefined ? undefined : previous.schedule;
-    } else if (draft.schedule === null) {
-      schedule = undefined;
-    } else {
-      schedule = draft.schedule;
-    }
     const stored: StoredTimetable = {
       id: TIMETABLE_ID,
       semesterName: draft.semesterName.trim(),
       anchorDate: draft.anchorDate,
       anchorWeek: draft.anchorWeek,
-      courses: courses,
-      schedule: schedule
+      courses: courses
     };
+    let resolvedSchedule: TimetableSchedule | null | undefined;
+    if (draft.schedule === undefined) {
+      resolvedSchedule = previous === undefined ? undefined : previous.schedule;
+    } else {
+      resolvedSchedule = draft.schedule;
+    }
+    if (resolvedSchedule !== undefined) {
+      stored.schedule = resolvedSchedule;
+    }
     try {
       await this.repository.save(stored, []);
     } catch (_) {
@@ -246,11 +261,11 @@ export class TimetableService {
     return { success: true, data: summary };
   }
 
-  /** 替换导入前清理旧表的未来提醒；已触发/已完成的同样保留。返回旧表供三态语义沿用。 */
-  private async cascadeExisting(): Promise<StoredTimetable | undefined> {
+  /** 替换导入前清理旧表的未来提醒；已触发/已完成的同样保留。 */
+  private async cascadeExisting(): Promise<void> {
     const stored = await this.repository.find();
     if (stored === undefined) {
-      return undefined;
+      return;
     }
     const occurrences = await this.repository.findOccurrences();
     for (const occ of occurrences) {
@@ -265,6 +280,5 @@ export class TimetableService {
       await this.reminderService.delete(occ.reminderId);
     }
     await this.repository.clear();
-    return stored;
   }
 }

@@ -2,8 +2,7 @@
 // 三种导入方式（手动表单、教务 JSON、AI 图片识别）都汇聚到同一个
 // TimetableDraft 结构；教务 JSON 与视觉模型输出共用 parseTimetableData。
 
-import { CourseDraft, ScheduleOverride, TimetableDraft, TimetableParseIssue, TimetableParseIssueCode,
-  TimetableSchedule } from '../model/TimetableTypes';
+import { CourseDraft, ScheduleOverride, TimetableDraft, TimetableParseIssue, TimetableParseIssueCode, TimetableSchedule } from '../model/TimetableTypes';
 
 const DAY_MS: number = 86400000;
 const WEEK_MS: number = 7 * DAY_MS;
@@ -131,45 +130,67 @@ export function occurrenceEpochMs(anchorDateMs: number, anchorWeek: number, week
     Math.floor(minutes / 60), minutes % 60, 0, 0).getTime();
 }
 
-/** 手动表单路径的同一套校验；解析路径在校验后调用 */
-/** 作息形状与取值校验（展示用数据，但进服务存储就必须形状可靠）。 */
+const MAX_SCHEDULE_DURATION: number = 720;
+
+/** 作息形状校验：时间合法、duration 1–720、overrides/locked 数组形状 */
 export function validateTimetableSchedule(schedule: TimetableSchedule): TimetableParseIssue[] {
   const issues: TimetableParseIssue[] = [];
   if (parseHHmm(schedule.firstStart) === undefined) {
-    issues.push(fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.firstStart'));
+    issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.firstStart', '第一节开始时间格式不正确'));
   }
-  if (!Number.isInteger(schedule.duration) || schedule.duration < 1 || schedule.duration > 720) {
-    issues.push(fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.duration'));
+  if (typeof schedule.duration !== 'number' || schedule.duration < 1 ||
+    schedule.duration > MAX_SCHEDULE_DURATION) {
+    issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.duration', '每节时长需在 1–720 分钟之间'));
   }
-  if (!Number.isInteger(schedule.breakMinutes) || schedule.breakMinutes < 0 || schedule.breakMinutes > 240) {
-    issues.push(fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.breakMinutes'));
+  if (typeof schedule.breakMinutes !== 'number' || schedule.breakMinutes < 0 || schedule.breakMinutes > 240) {
+    issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.breakMinutes', '课间需在 0–240 分钟之间'));
   }
-  issues.push(...validateBand(schedule.lunchStart, schedule.lunchEnd, 'schedule.lunch'));
-  issues.push(...validateBand(schedule.dinnerStart, schedule.dinnerEnd, 'schedule.dinner'));
+  const optionalTimes: string[] = [];
+  if (schedule.lunchStart !== undefined) {
+    optionalTimes.push('schedule.lunchStart');
+  }
+  if (schedule.lunchEnd !== undefined) {
+    optionalTimes.push('schedule.lunchEnd');
+  }
+  if (schedule.dinnerStart !== undefined) {
+    optionalTimes.push('schedule.dinnerStart');
+  }
+  if (schedule.dinnerEnd !== undefined) {
+    optionalTimes.push('schedule.dinnerEnd');
+  }
+  for (let i = 0; i < optionalTimes.length; i++) {
+    const key: string = optionalTimes[i];
+    const value: string | undefined = key === 'schedule.lunchStart' ? schedule.lunchStart
+      : key === 'schedule.lunchEnd' ? schedule.lunchEnd
+        : key === 'schedule.dinnerStart' ? schedule.dinnerStart : schedule.dinnerEnd;
+    if (value !== undefined && parseHHmm(value) === undefined) {
+      issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, key, '时间格式不正确'));
+    }
+  }
   if (schedule.overrides !== undefined) {
-    if (!Array.isArray(schedule.overrides) || schedule.overrides.length > 50) {
-      issues.push(fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.overrides'));
+    if (!Array.isArray(schedule.overrides)) {
+      issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.overrides', '单节覆盖必须是数组'));
     } else {
       for (let i = 0; i < schedule.overrides.length; i++) {
         const o: ScheduleOverride = schedule.overrides[i];
-        if (!Number.isInteger(o.index) || o.index < 1) {
-          issues.push(fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.overrides[' + i + '].index'));
-        }
-        const os: number | undefined = parseHHmm(o.start);
-        const oe: number | undefined = parseHHmm(o.end);
-        if (os === undefined || oe === undefined || os >= oe) {
-          issues.push(fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.overrides[' + i + '].start'));
+        const startMin: number | undefined = parseHHmm(o.start);
+        const endMin: number | undefined = parseHHmm(o.end);
+        if (typeof o.index !== 'number' || o.index < 1 ||
+          startMin === undefined || endMin === undefined || endMin <= startMin) {
+          issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.overrides', '单节覆盖格式不正确'));
+          break;
         }
       }
     }
   }
   if (schedule.locked !== undefined) {
     if (!Array.isArray(schedule.locked)) {
-      issues.push(fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.locked'));
+      issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.locked', '锁定节次必须是数组'));
     } else {
       for (let i = 0; i < schedule.locked.length; i++) {
-        if (!Number.isInteger(schedule.locked[i]) || schedule.locked[i] < 1) {
-          issues.push(fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.locked'));
+        if (typeof schedule.locked[i] !== 'number' || schedule.locked[i] < 1) {
+          issues.push(issue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.locked', '锁定节次必须是正整数'));
+          break;
         }
       }
     }
@@ -177,15 +198,61 @@ export function validateTimetableSchedule(schedule: TimetableSchedule): Timetabl
   return issues;
 }
 
-function validateBand(start: string | undefined, end: string | undefined, field: string): TimetableParseIssue[] {
-  if (start === undefined && end === undefined) { return []; }
-  if (start === undefined || end === undefined) { return [fieldIssue(TimetableParseIssueCode.INVALID_FIELD, field)]; }
-  const s: number | undefined = parseHHmm(start);
-  const e: number | undefined = parseHHmm(end);
-  if (s === undefined || e === undefined || s >= e) { return [fieldIssue(TimetableParseIssueCode.INVALID_FIELD, field)]; }
-  return [];
+/** JSON 里的 schedule 字段：undefined=不传 / null=清空 / 对象=解析校验 */
+function parseScheduleField(raw: Object | null): TimetableSchedule | undefined {
+  const fields = raw as Record<string, Object | null>;
+  const schedule: TimetableSchedule = {
+    firstStart: fields['firstStart'] as string,
+    duration: fields['duration'] as number,
+    breakMinutes: fields['breakMinutes'] as number
+  };
+  if (typeof fields['firstStart'] !== 'string' || typeof fields['duration'] !== 'number' ||
+    typeof fields['breakMinutes'] !== 'number') {
+    return undefined;
+  }
+  if (fields['lunchStart'] !== undefined) {
+    schedule.lunchStart = fields['lunchStart'] as string;
+  }
+  if (fields['lunchEnd'] !== undefined) {
+    schedule.lunchEnd = fields['lunchEnd'] as string;
+  }
+  if (fields['dinnerStart'] !== undefined) {
+    schedule.dinnerStart = fields['dinnerStart'] as string;
+  }
+  if (fields['dinnerEnd'] !== undefined) {
+    schedule.dinnerEnd = fields['dinnerEnd'] as string;
+  }
+  const overrides: ScheduleOverride[] = [];
+  const rawOverrides = fields['overrides'];
+  if (Array.isArray(rawOverrides)) {
+    const list = rawOverrides as Object[];
+    for (let i = 0; i < list.length; i++) {
+      const o = list[i] as Record<string, Object | null>;
+      overrides.push({
+        index: o['index'] as number,
+        start: o['start'] as string,
+        end: o['end'] as string
+      });
+    }
+  }
+  if (overrides.length > 0) {
+    schedule.overrides = overrides;
+  }
+  const locked: number[] = [];
+  const rawLocked = fields['locked'];
+  if (Array.isArray(rawLocked)) {
+    const list = rawLocked as Object[];
+    for (let i = 0; i < list.length; i++) {
+      locked.push(list[i] as number);
+    }
+  }
+  if (locked.length > 0) {
+    schedule.locked = locked;
+  }
+  return schedule;
 }
 
+/** 手动表单路径的同一套校验；解析路径在校验后调用 */
 export function validateTimetableDraft(draft: TimetableDraft): TimetableParseIssue[] {
   const issues: TimetableParseIssue[] = [];
   if (draft.semesterName.trim().length === 0) {
@@ -200,9 +267,6 @@ export function validateTimetableDraft(draft: TimetableDraft): TimetableParseIss
   if (!Array.isArray(draft.courses) || draft.courses.length === 0) {
     issues.push(fieldIssue(TimetableParseIssueCode.MISSING_FIELD, 'courses'));
     return issues;
-  }
-  if (draft.schedule !== undefined && draft.schedule !== null) {
-    issues.push(...validateTimetableSchedule(draft.schedule));
   }
   for (let i = 0; i < draft.courses.length; i++) {
     const course: CourseDraft = draft.courses[i];
@@ -260,73 +324,6 @@ function readOptionalString(fields: Record<string, Object | null>, key: string):
     return raw;
   }
   return undefined;
-}
-
-interface ScheduleParseResult {
-  schedule?: TimetableSchedule;
-  issueField?: TimetableParseIssue;
-}
-
-function parseScheduleObject(raw: Record<string, Object | null>): ScheduleParseResult {
-  const keys: string[] = Object.keys(raw);
-  for (const key of ['firstStart', 'duration', 'breakMinutes']) {
-    if (!keys.includes(key)) {
-      return { issueField: fieldIssue(TimetableParseIssueCode.MISSING_FIELD, 'schedule.' + key) };
-    }
-  }
-  if (typeof raw['firstStart'] !== 'string' || typeof raw['duration'] !== 'number' ||
-    typeof raw['breakMinutes'] !== 'number') {
-    return { issueField: fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule') };
-  }
-  const schedule: TimetableSchedule = {
-    firstStart: raw['firstStart'] as string,
-    duration: raw['duration'] as number,
-    breakMinutes: raw['breakMinutes'] as number
-  };
-  const optionalTimes: string[] = ['lunchStart', 'lunchEnd', 'dinnerStart', 'dinnerEnd'];
-  for (const key of optionalTimes) {
-    const value: Object | null = raw[key];
-    if (value !== undefined && value !== null) {
-      if (typeof value !== 'string') {
-        return { issueField: fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.' + key) };
-      }
-      if (key === 'lunchStart') { schedule.lunchStart = value as string; }
-      if (key === 'lunchEnd') { schedule.lunchEnd = value as string; }
-      if (key === 'dinnerStart') { schedule.dinnerStart = value as string; }
-      if (key === 'dinnerEnd') { schedule.dinnerEnd = value as string; }
-    }
-  }
-  if (raw['overrides'] !== undefined && raw['overrides'] !== null) {
-    if (!Array.isArray(raw['overrides'])) {
-      return { issueField: fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.overrides') };
-    }
-    const overrides: ScheduleOverride[] = [];
-    const rawOverrides = raw['overrides'] as Object[];
-    for (let i = 0; i < rawOverrides.length; i++) {
-      const item = rawOverrides[i] as Record<string, Object | null>;
-      if (item === null || typeof item !== 'object' || Array.isArray(item) ||
-        typeof item['index'] !== 'number' || typeof item['start'] !== 'string' || typeof item['end'] !== 'string') {
-        return { issueField: fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.overrides[' + i + ']') };
-      }
-      overrides.push({ index: item['index'] as number, start: item['start'] as string, end: item['end'] as string });
-    }
-    schedule.overrides = overrides;
-  }
-  if (raw['locked'] !== undefined && raw['locked'] !== null) {
-    if (!Array.isArray(raw['locked'])) {
-      return { issueField: fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.locked') };
-    }
-    const locked: number[] = [];
-    const rawLocked = raw['locked'] as Object[];
-    for (let i = 0; i < rawLocked.length; i++) {
-      if (typeof rawLocked[i] !== 'number' || !Number.isFinite(rawLocked[i] as number)) {
-        return { issueField: fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule.locked') };
-      }
-      locked.push(rawLocked[i] as number);
-    }
-    schedule.locked = locked;
-  }
-  return { schedule: schedule };
 }
 
 interface CourseParseResult {
@@ -398,29 +395,32 @@ export function parseTimetableData(rawResponse: string): TimetableDataParseResul
     }
     courses.push(parsed.course as CourseDraft);
   }
-  let schedule: TimetableSchedule | null | undefined = undefined;
-  if (keys.includes('schedule')) {
-    const rawSchedule: Object | null = fields['schedule'];
-    if (rawSchedule === null) {
-      schedule = null;
-    } else if (typeof rawSchedule === 'object' && !Array.isArray(rawSchedule)) {
-      const parsedSchedule = parseScheduleObject(rawSchedule as Record<string, Object | null>);
-      if (parsedSchedule.issueField !== undefined) {
-        return { issues: [parsedSchedule.issueField] };
-      }
-      schedule = parsedSchedule.schedule as TimetableSchedule;
-    } else {
-      return { issues: [fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule')] };
-    }
-  }
-
   const draft: TimetableDraft = {
     semesterName: fields['semesterName'] as string,
     anchorDate: fields['anchorDate'] as string,
     anchorWeek: fields['anchorWeek'] as number,
-    schedule: schedule,
     courses: courses
   };
+  // schedule 三态：不传=沿用、null=清空、对象=替换
+  if (keys.includes('schedule')) {
+    const rawSchedule = fields['schedule'];
+    if (rawSchedule !== null) {
+      if (typeof rawSchedule !== 'object' || Array.isArray(rawSchedule)) {
+        return { issues: [fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule')] };
+      }
+      const parsedSchedule = parseScheduleField(rawSchedule);
+      if (parsedSchedule === undefined) {
+        return { issues: [fieldIssue(TimetableParseIssueCode.INVALID_FIELD, 'schedule')] };
+      }
+      const scheduleIssues = validateTimetableSchedule(parsedSchedule);
+      if (scheduleIssues.length > 0) {
+        return { issues: scheduleIssues };
+      }
+      draft.schedule = parsedSchedule;
+    } else {
+      draft.schedule = null;
+    }
+  }
   const validation: TimetableParseIssue[] = validateTimetableDraft(draft);
   if (validation.length > 0) {
     return { issues: validation };

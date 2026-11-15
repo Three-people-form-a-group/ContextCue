@@ -25,3 +25,6 @@ oh_modules/
 
 # Node modules
 node_modules/
+
+# TypeScript build cache
+.cache/

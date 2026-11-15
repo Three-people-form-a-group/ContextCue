@@ -15,6 +15,10 @@
     {
       "name": "permission_reason_location",
       "value": "用于基于用户当前位置触发地理围栏提醒"
+    },
+    {
+      "name": "permission_reason_reminder",
+      "value": "用于在设定时间通过系统提醒代理发出提醒"
     }
   ]
 }

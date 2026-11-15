@@ -1,7 +1,7 @@
 import { StyleConstants } from '../common/StyleConstants';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
-import { DemoCourse, TimetableDemoData } from '../common/TimetableDemoData';
+import { TimetableCourse } from '../common/TimetableCourse';
 
 /**
  * 课程详情弹层：点击课程格后从底部升起。
@@ -10,7 +10,7 @@ import { DemoCourse, TimetableDemoData } from '../common/TimetableDemoData';
 @Component
 export struct CourseDetailSheet {
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
-  course: DemoCourse = TimetableDemoData.EMPTY_COURSE;
+  course: TimetableCourse = new TimetableCourse('', '', '', '', 1, '00:00', '00:00', [], 0);
   onClose: () => void = () => {};
   onEdit: () => void = () => {};
   onDelete: () => void = () => {};

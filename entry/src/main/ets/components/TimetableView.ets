@@ -1,13 +1,14 @@
 import { promptAction } from '@kit.ArkUI';
 import { StyleConstants } from '../common/StyleConstants';
-import { TimetableDemoData, DemoCourse } from '../common/TimetableDemoData';
-import { SectionSchedule, PeriodDef, minutesOfTime } from '../common/SectionSchedule';
-import { TimetableStore } from '../common/TimetableStore';
+import { TimetableCourse, PeriodRow, derivePeriods } from '../common/TimetableCourse';
+import { getAppServices } from '../app/AppServiceRegistry';
+import { CourseDraft, TimetableDraft } from '../timetable/model/TimetableTypes';
+import { RefreshSignal } from '../common/RefreshSignal';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
 import { CourseDetailSheet } from './CourseDetailSheet';
 import { CourseEditSheet } from './CourseEditSheet';
-import { ScheduleCalibratorSheet } from './ScheduleCalibratorSheet';
+import { TimetableImportSheet } from './TimetableImportSheet';
 
 const DAY_LABELS: string[] = ['一', '二', '三', '四', '五', '六', '日'];
 const DAY_NUMBERS: number[] = [1, 2, 3, 4, 5, 6, 7];
@@ -27,12 +28,6 @@ const LUNCH_ROW_HEIGHT: number = 24;
 const DINNER_ROW_HEIGHT: number = 22;
 const PERIOD_GUTTER_WIDTH: number = 34;
 
-/** 演示用周锚点：第 8 周的周一是 2026-10-19 */
-const ANCHOR_YEAR: number = 2026;
-const ANCHOR_MONTH: number = 9;
-const ANCHOR_DAY: number = 19;
-const ANCHOR_WEEK: number = 8;
-
 const MODE_WEEK: string = 'week';
 const MODE_DAY: string = 'day';
 
@@ -45,39 +40,91 @@ const MODE_DAY: string = 'day';
  *   单日时间轴：点某天表头进入。按真实时间线性排布，用于看具体某一节的间隔。
  * 点课程打开详情并可编辑/删除；「作息」打开时间轴校准器。
  *
- * 数据来自 `TimetableDemoData`（UI 演示数据），接入 TimetableService 后替换数据源。
+ * 数据来自 `TimetableService`（getTimetable / getWeekInfo），保存走 saveTimetable。
  */
 @Component
 export struct TimetableView {
-  @State selectedWeek: number = TimetableDemoData.CURRENT_WEEK;
+  @State selectedWeek: number = 1;
   @State selectedDay: number = 1;
   @State mode: string = MODE_WEEK;
-  @State courses: DemoCourse[] = TimetableStore.courses();
+  /** 从 TimetableService 读来的课程 */
+  @State courses: TimetableCourse[] = [];
+  /** 由课程时间推导出的表格行 */
+  @State periodsList: PeriodRow[] = [];
+  @State currentWeek: number = 1;
+  @State totalWeeks: number = 16;
+  @State semesterName: string = '';
+  @State weekStartDate: string = '';
+  @State anchorDate: string = '';
+  @State anchorWeek: number = 1;
+  @State loadError: string = '';
   @State showDetail: boolean = false;
-  @State detailCourse: DemoCourse = TimetableDemoData.EMPTY_COURSE;
+  @State detailCourse: TimetableCourse = new TimetableCourse('', '', '', '', 1, '00:00', '00:00', [], 0);
   @State showEdit: boolean = false;
-  @State editCourse: DemoCourse = TimetableDemoData.EMPTY_COURSE;
+  @State editCourse: TimetableCourse = new TimetableCourse('', '', '', '', 1, '00:00', '00:00', [], 0);
   @State editIsNew: boolean = true;
-  /** 学校作息：决定七天表格的行（节次）与每节真实时间 */
-  @State schedule: SectionSchedule = TimetableStore.schedule();
-  @State showCalibrator: boolean = false;
+  @State showImport: boolean = false;
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
 
   private scroller: Scroller = new Scroller();
 
   aboutToAppear(): void {
-    // 组件可能被重建（切视图 / 切 Tab / 从详情返回），这里把最新改动读回来
-    this.courses = TimetableStore.courses();
-    this.schedule = TimetableStore.schedule();
     const weekday: number = new Date().getDay();
     this.selectedDay = weekday === 0 ? 7 : weekday;
+    this.loadTimetable();
+  }
+
+  /** 数据只从 TimetableService 读；组件重建时重新拉一次 */
+  private async loadTimetable(): Promise<void> {
+    const services = getAppServices();
+    const info = await services.timetableService.getWeekInfo();
+    if (info.success && info.data !== undefined) {
+      this.currentWeek = info.data.currentWeek;
+      this.totalWeeks = info.data.totalWeeks;
+      this.semesterName = info.data.semesterName;
+      this.weekStartDate = info.data.weekStartDate;
+      if (this.selectedWeek <= 1) {
+        this.selectedWeek = info.data.currentWeek;
+      }
+    }
+    const result = await services.timetableService.getTimetable();
+    if (result.success && result.data !== undefined) {
+      const loaded: TimetableCourse[] = [];
+      for (let i = 0; i < result.data.courses.length; i++) {
+        loaded.push(TimetableCourse.fromStored(result.data.courses[i]));
+      }
+      this.courses = loaded;
+      this.semesterName = result.data.semesterName;
+      this.anchorDate = result.data.anchorDate;
+      this.anchorWeek = result.data.anchorWeek;
+      this.loadError = '';
+    } else {
+      this.courses = [];
+      if (result.error !== undefined && result.error.code !== 'TIMETABLE_NOT_FOUND') {
+        this.loadError = result.error.message;
+      }
+    }
+    this.periodsList = derivePeriods(this.courses);
   }
 
   // ---------- 日期 ----------
 
+  /** 当前周的周一（getWeekInfo.weekStartDate 为 "YYYY-MM-DD"） */
+  private mondayOfCurrentWeek(): Date {
+    if (this.weekStartDate !== '') {
+      const parts: string[] = this.weekStartDate.split('-');
+      if (parts.length === 3) {
+        return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      }
+    }
+    const now: Date = new Date();
+    const weekday: number = now.getDay() === 0 ? 7 : now.getDay();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate() - (weekday - 1));
+  }
+
   private mondayOfWeek(week: number): Date {
-    const base: Date = new Date(ANCHOR_YEAR, ANCHOR_MONTH, ANCHOR_DAY);
-    base.setDate(base.getDate() + (week - ANCHOR_WEEK) * 7);
+    const base: Date = this.mondayOfCurrentWeek();
+    base.setDate(base.getDate() + (week - this.currentWeek) * 7);
     return base;
   }
 
@@ -88,7 +135,7 @@ export struct TimetableView {
 
   private isToday(day: number): boolean {
     const weekday: number = new Date().getDay();
-    return (weekday === 0 ? 7 : weekday) === day && this.selectedWeek === TimetableDemoData.CURRENT_WEEK;
+    return (weekday === 0 ? 7 : weekday) === day && this.selectedWeek === this.currentWeek;
   }
 
   /** 单日视图标题：第 8 周 · 周三 10.21 */
@@ -129,12 +176,12 @@ export struct TimetableView {
     return `${h < 10 ? `0${h}` : `${h}`}:${m < 10 ? `0${m}` : `${m}`}`;
   }
 
-  private blockTop(course: DemoCourse): number {
+  private blockTop(course: TimetableCourse): number {
     const minutes: number = this.minutesOf(course.startTime) - DAY_START_HOUR * 60;
     return Math.max(0, (minutes / 60) * HOUR_HEIGHT);
   }
 
-  private blockHeight(course: DemoCourse): number {
+  private blockHeight(course: TimetableCourse): number {
     const span: number = this.minutesOf(course.endTime) - this.minutesOf(course.startTime);
     return Math.max(26, (span / 60) * HOUR_HEIGHT);
   }
@@ -149,32 +196,12 @@ export struct TimetableView {
 
   // ---------- 节次表格的换算 ----------
 
-  private periods(): PeriodDef[] {
-    return this.schedule.periods();
+  private periods(): PeriodRow[] {
+    return this.periodsList;
   }
 
-  private morningCount(): number {
-    return this.schedule.morningCount();
-  }
-
-  /** 第 idx 节之前要插入哪条休息带：'lunch' / 'dinner' / '' */
+  /** 休息带：真实课程数据里没有作息表，不再插入 */
   private bandBefore(idx: number): string {
-    const list: PeriodDef[] = this.periods();
-    if (idx <= 0 || idx >= list.length) {
-      return '';
-    }
-    const prev: PeriodDef = list[idx - 1];
-    const cur: PeriodDef = list[idx];
-    const lunchS: number = minutesOfTime(this.schedule.lunchStart);
-    const lunchE: number = minutesOfTime(this.schedule.lunchEnd);
-    const dinnerS: number = minutesOfTime(this.schedule.dinnerStart);
-    const dinnerE: number = minutesOfTime(this.schedule.dinnerEnd);
-    if (prev.startMinutes < lunchS && cur.startMinutes >= lunchE) {
-      return 'lunch';
-    }
-    if (prev.startMinutes < dinnerS && cur.startMinutes >= dinnerE) {
-      return 'dinner';
-    }
     return '';
   }
 
@@ -190,7 +217,7 @@ export struct TimetableView {
 
   /** 整个表格的高度（含休息带） */
   private tableHeight(): number {
-    const list: PeriodDef[] = this.periods();
+    const list: PeriodRow[] = this.periods();
     let height: number = 0;
     for (let i = 0; i < list.length; i++) {
       if (i > 0) {
@@ -203,7 +230,7 @@ export struct TimetableView {
 
   /** 第 index 节所在行的纵向位置 */
   private rowOffset(index: number): number {
-    const list: PeriodDef[] = this.periods();
+    const list: PeriodRow[] = this.periods();
     let offset: number = 0;
     for (let i = 0; i < list.length; i++) {
       if (i > 0) {
@@ -219,7 +246,7 @@ export struct TimetableView {
 
   /** 某一时刻落在第几节（取开始时间不晚于它的最后一节） */
   private periodIndexAt(minutes: number): number {
-    const list: PeriodDef[] = this.periods();
+    const list: PeriodRow[] = this.periods();
     if (list.length === 0) {
       return 1;
     }
@@ -232,22 +259,22 @@ export struct TimetableView {
     return index;
   }
 
-  private startPeriodOf(course: DemoCourse): number {
+  private startPeriodOf(course: TimetableCourse): number {
     return this.periodIndexAt(this.minutesOf(course.startTime));
   }
 
   /** 结束节次：用 end-1 分钟判定，避免「09:40 恰好等于第二节结束」被算到下一节 */
-  private endPeriodOf(course: DemoCourse): number {
+  private endPeriodOf(course: TimetableCourse): number {
     const startPeriod: number = this.startPeriodOf(course);
     const endMinutes: number = Math.max(this.minutesOf(course.endTime) - 1, this.minutesOf(course.startTime));
     return Math.max(startPeriod, this.periodIndexAt(endMinutes));
   }
 
-  private courseTop(course: DemoCourse): number {
+  private courseTop(course: TimetableCourse): number {
     return this.rowOffset(this.startPeriodOf(course));
   }
 
-  private courseHeight(course: DemoCourse): number {
+  private courseHeight(course: TimetableCourse): number {
     const span: number = this.endPeriodOf(course) - this.startPeriodOf(course) + 1;
     return span * PERIOD_ROW_HEIGHT;
   }
@@ -270,32 +297,32 @@ export struct TimetableView {
 
   // ---------- 课程与空档 ----------
 
-  private coursesOnDay(day: number): DemoCourse[] {
-    const out: DemoCourse[] = [];
+  private coursesOnDay(day: number): TimetableCourse[] {
+    const out: TimetableCourse[] = [];
     for (let i = 0; i < this.courses.length; i++) {
-      const c: DemoCourse = this.courses[i];
+      const c: TimetableCourse = this.courses[i];
       if (c.dayOfWeek === day && c.weeks.indexOf(this.selectedWeek) >= 0) {
         out.push(c);
       }
     }
-    out.sort((a: DemoCourse, b: DemoCourse) => this.minutesOf(a.startTime) - this.minutesOf(b.startTime));
+    out.sort((a: TimetableCourse, b: TimetableCourse) => this.minutesOf(a.startTime) - this.minutesOf(b.startTime));
     return out;
   }
 
-  private dayCourses(): DemoCourse[] {
+  private dayCourses(): TimetableCourse[] {
     return this.coursesOnDay(this.selectedDay);
   }
 
   /** 某一天内的重叠分栏：周览表格与单日时间轴共用同一套排布规则 */
-  private lanesOfDay(day: number): DemoCourse[][] {
-    const list: DemoCourse[] = this.coursesOnDay(day);
-    const lanes: DemoCourse[][] = [];
+  private lanesOfDay(day: number): TimetableCourse[][] {
+    const list: TimetableCourse[] = this.coursesOnDay(day);
+    const lanes: TimetableCourse[][] = [];
     for (let i = 0; i < list.length; i++) {
-      const c: DemoCourse = list[i];
+      const c: TimetableCourse = list[i];
       let placed: boolean = false;
       for (let l = 0; l < lanes.length; l++) {
-        const lane: DemoCourse[] = lanes[l];
-        const last: DemoCourse = lane[lane.length - 1];
+        const lane: TimetableCourse[] = lanes[l];
+        const last: TimetableCourse = lane[lane.length - 1];
         if (this.minutesOf(last.endTime) <= this.minutesOf(c.startTime)) {
           lane.push(c);
           placed = true;
@@ -303,7 +330,7 @@ export struct TimetableView {
         }
       }
       if (!placed) {
-        const nextLane: DemoCourse[] = [];
+        const nextLane: TimetableCourse[] = [];
         nextLane.push(c);
         lanes.push(nextLane);
       }
@@ -311,12 +338,12 @@ export struct TimetableView {
     return lanes;
   }
 
-  private lanes(): DemoCourse[][] {
+  private lanes(): TimetableCourse[][] {
     return this.lanesOfDay(this.selectedDay);
   }
 
   private mergedIntervals(): number[][] {
-    const list: DemoCourse[] = this.dayCourses();
+    const list: TimetableCourse[] = this.dayCourses();
     const intervals: number[][] = [];
     for (let i = 0; i < list.length; i++) {
       intervals.push([this.minutesOf(list[i].startTime), this.minutesOf(list[i].endTime)]);
@@ -372,7 +399,7 @@ export struct TimetableView {
    * 只有 5 组、亮度接近，目标是像印刷品的套色，而不是一排彩色标签。
    * 顺序固定，同一门课在整周表格和单日时间轴里始终同色。
    */
-  private tint(course: DemoCourse): ResourceColor {
+  private tint(course: TimetableCourse): ResourceColor {
     if (Theme.isMinimal(this.uiMode)) {
       return Theme.surface(this.uiMode);
     }
@@ -387,7 +414,7 @@ export struct TimetableView {
     return palette[course.tone % palette.length];
   }
 
-  private edge(course: DemoCourse): ResourceColor {
+  private edge(course: TimetableCourse): ResourceColor {
     if (Theme.isMinimal(this.uiMode)) {
       return Theme.rule(this.uiMode);
     }
@@ -407,13 +434,13 @@ export struct TimetableView {
    * 只写 id 的话，编辑保存后 id 不变，ArkUI 判定该项未变化而跳过重建，
    * 课程块就会停在旧的时间/标题上——这是"编辑后课表不刷新"的第二处原因。
    */
-  private courseKey(course: DemoCourse): string {
+  private courseKey(course: TimetableCourse): string {
     return `${course.id}|${course.dayOfWeek}|${course.startTime}|${course.endTime}` +
       `|${course.name}|${course.teacher}|${course.location}|${course.tone}|${course.weeks.join(',')}`;
   }
 
   /** 泳道 key 同样要跟着课程内容变化，否则整个泳道容器不会被重建 */
-  private laneKey(day: number, lane: DemoCourse[], laneIndex: number): string {
+  private laneKey(day: number, lane: TimetableCourse[], laneIndex: number): string {
     let key: string = `lane-${this.selectedWeek}-${day}-${laneIndex}`;
     for (let i = 0; i < lane.length; i++) {
       key += `#${this.courseKey(lane[i])}`;
@@ -425,7 +452,7 @@ export struct TimetableView {
 
   private shiftWeek(delta: number): void {
     const next: number = this.selectedWeek + delta;
-    if (next >= 1 && next <= TimetableDemoData.TOTAL_WEEKS) {
+    if (next >= 1 && next <= this.totalWeeks) {
       this.selectedWeek = next;
     }
   }
@@ -434,7 +461,7 @@ export struct TimetableView {
   private shiftDay(delta: number): void {
     let day: number = this.selectedDay + delta;
     if (day > 7) {
-      if (this.selectedWeek < TimetableDemoData.TOTAL_WEEKS) {
+      if (this.selectedWeek < this.totalWeeks) {
         this.selectedWeek += 1;
         day = 1;
       } else {
@@ -498,21 +525,21 @@ export struct TimetableView {
     if (endMinutes <= startMinutes) {
       endMinutes = Math.min(MAX_EDIT_MINUTES, startMinutes + 15);
     }
-    this.editCourse = new DemoCourse('', '', '', '', this.selectedDay,
+    this.editCourse = new TimetableCourse('', '', '', '', this.selectedDay,
       this.formatMinutes(startMinutes), this.formatMinutes(endMinutes), [], 0);
     this.editIsNew = true;
     this.showEdit = true;
   }
 
-  private openEdit(course: DemoCourse): void {
+  private openEdit(course: TimetableCourse): void {
     this.showDetail = false;
     this.editCourse = course;
     this.editIsNew = false;
     this.showEdit = true;
   }
 
-  private saveCourse(course: DemoCourse): void {
-    const next: DemoCourse[] = [];
+  private saveCourse(course: TimetableCourse): void {
+    const next: TimetableCourse[] = [];
     let replaced: boolean = false;
     for (let i = 0; i < this.courses.length; i++) {
       if (this.courses[i].id === course.id) {
@@ -525,26 +552,48 @@ export struct TimetableView {
     if (!replaced) {
       next.push(course);
     }
-    this.courses = next;
-    // 同步写进进程内存储，组件重建后仍然是最新数据
-    TimetableStore.save(course);
     this.showEdit = false;
     this.selectedDay = course.dayOfWeek;
+    this.persist(next);
   }
 
-  private deleteCourse(course: DemoCourse): void {
-    const next: DemoCourse[] = [];
+  private deleteCourse(course: TimetableCourse): void {
+    const next: TimetableCourse[] = [];
     for (let i = 0; i < this.courses.length; i++) {
       if (this.courses[i].id !== course.id) {
         next.push(this.courses[i]);
       }
     }
-    this.courses = next;
-    TimetableStore.remove(course.id);
     this.showDetail = false;
+    this.persist(next);
   }
 
-  private confirmDelete(course: DemoCourse): void {
+  /** 整份课程表写回 TimetableService：服务负责生成本周/下周的提醒 */
+  private async persist(courses: TimetableCourse[]): Promise<void> {
+    const draft: TimetableDraft = {
+      semesterName: this.semesterName === '' ? '我的课程表' : this.semesterName,
+      anchorDate: this.anchorDate === '' ? this.todayIso() : this.anchorDate,
+      anchorWeek: this.anchorWeek > 0 ? this.anchorWeek : this.currentWeek,
+      courses: courses.map((c: TimetableCourse) => c.toDraft())
+    };
+    const result = await getAppServices().timetableService.saveTimetable(draft);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '课程表保存失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    await this.loadTimetable();
+  }
+
+  private todayIso(): string {
+    const d: Date = new Date();
+    return `${d.getFullYear()}-${d.getMonth() + 1 < 10 ? '0' : ''}${d.getMonth() + 1}` +
+      `-${d.getDate() < 10 ? '0' : ''}${d.getDate()}`;
+  }
+
+  private confirmDelete(course: TimetableCourse): void {
     this.getUIContext().getPromptAction().showDialog({
       title: '删除课程',
       message: `确定删除「${course.name}」吗？`,
@@ -560,20 +609,23 @@ export struct TimetableView {
     });
   }
 
-  private showImportHint(): void {
-    this.getUIContext().getPromptAction().showDialog({
-      title: '导入课程表',
-      message: 'JSON / 图片导入需要公共解析器（parseTimetableData、FakeTimetableImageParser），当前分支尚未接入。可先点空闲时段或「＋ 添加」手动录入。',
-      buttons: [
-        { text: '知道了', color: $r('app.color.detail_ink') }
-      ]
-    }).then(() => {
-    }).catch(() => {
-    });
+  private async applyImported(draft: TimetableDraft): Promise<void> {
+    const result = await getAppServices().timetableService.saveTimetable(draft);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '导入失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    this.selectedWeek = 1;
+    await this.loadTimetable();
+    const created: number = result.data === undefined ? 0 : result.data.reminders.createdCount;
+    this.getUIContext().getPromptAction().showToast({ message: `已导入，生成 ${created} 条上课提醒` });
   }
 
   private scrollToFirstCourse(): void {
-    const list: DemoCourse[] = this.dayCourses();
+    const list: TimetableCourse[] = this.dayCourses();
     if (list.length === 0) {
       return;
     }
@@ -613,11 +665,23 @@ export struct TimetableView {
         })
       }
 
+      if (this.showImport) {
+        TimetableImportSheet({
+          onApply: (draft: TimetableDraft) => {
+            this.showImport = false;
+            this.applyImported(draft);
+          },
+          onClose: () => {
+            this.showImport = false;
+          }
+        })
+      }
+
       if (this.showEdit) {
         CourseEditSheet({
           initial: this.editCourse,
           isNew: this.editIsNew,
-          onSave: (course: DemoCourse) => {
+          onSave: (course: TimetableCourse) => {
             this.saveCourse(course);
           },
           onClose: () => {
@@ -626,19 +690,6 @@ export struct TimetableView {
         })
       }
 
-      if (this.showCalibrator) {
-        ScheduleCalibratorSheet({
-          initial: this.schedule,
-          onApply: (schedule: SectionSchedule) => {
-            this.schedule = schedule;
-            TimetableStore.setSchedule(schedule);
-            this.showCalibrator = false;
-          },
-          onClose: () => {
-            this.showCalibrator = false;
-          }
-        })
-      }
     }
     .width('100%')
     .height('100%')
@@ -647,7 +698,7 @@ export struct TimetableView {
       PanGesture({ direction: PanDirection.Horizontal, distance: 24 })
         .onActionEnd((event: GestureEvent) => {
           // 任何弹层打开时都不翻页，避免在表单上横滑把底下的课表换掉
-          if (this.showDetail || this.showEdit || this.showCalibrator) {
+          if (this.showDetail || this.showEdit || this.showImport) {
             return;
           }
           if (event.offsetX <= -48) {
@@ -723,7 +774,7 @@ export struct TimetableView {
               .fontSize(17)
               .fontWeight(900)
               .fontColor(Theme.ink(this.uiMode))
-            Text(TimetableDemoData.SEMESTER_NAME)
+            Text(this.semesterName === '' ? '尚未导入课程表' : this.semesterName)
               .fontSize(8)
               .fontColor(Theme.sub(this.uiMode))
           }
@@ -735,21 +786,11 @@ export struct TimetableView {
             .width(22)
             .height(36)
             .textAlign(TextAlign.Center)
-            .opacity(this.selectedWeek < TimetableDemoData.TOTAL_WEEKS ? 1 : 0.25)
+            .opacity(this.selectedWeek < this.totalWeeks ? 1 : 0.25)
             .onClick(() => {
               this.shiftWeek(1);
             })
           Blank()
-          Text('作息')
-            .fontSize(10)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(Theme.accent(this.uiMode))
-            .height(36)
-            .padding({ left: 5, right: 5 })
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
-              this.showCalibrator = true;
-            })
           Text('导入')
             .fontSize(10)
             .fontWeight(FontWeight.Bold)
@@ -759,7 +800,7 @@ export struct TimetableView {
             .padding({ left: 5, right: 5 })
             .textAlign(TextAlign.Center)
             .onClick(() => {
-              this.showImportHint();
+              this.showImport = true;
             })
           Text('＋')
             .fontSize(16)
@@ -845,12 +886,28 @@ export struct TimetableView {
         color: Theme.ink(this.uiMode)
       })
 
+      if (this.periodsList.length === 0) {
+        Column({ space: 8 }) {
+          Text(this.loadError === '' ? '还没有课程表' : this.loadError)
+            .fontSize(16)
+            .fontWeight(900)
+            .fontColor(this.loadError === '' ? Theme.text(this.uiMode) : Theme.alert(this.uiMode))
+          Text('点右上角「导入」粘贴 JSON，或「＋」手动添加第一门课')
+            .fontSize(12)
+            .fontColor(Theme.sub(this.uiMode))
+            .textAlign(TextAlign.Center)
+        }
+        .width('100%')
+        .padding({ top: 40, bottom: 40 })
+        .alignItems(HorizontalAlign.Center)
+      }
+
       // 表体：节次栏 + 七列
       Scroll() {
         Row() {
           // 节次栏：节号 + 真实开始时间
           Column() {
-            ForEach(this.periods(), (p: PeriodDef, idx: number) => {
+            ForEach(this.periods(), (p: PeriodRow, idx: number) => {
               if (this.bandBefore(idx) !== '') {
                 Column() {
                   Text(this.bandBefore(idx) === 'lunch' ? '午休' : '晚餐')
@@ -878,7 +935,7 @@ export struct TimetableView {
               .justifyContent(FlexAlign.Center)
               .alignItems(HorizontalAlign.End)
               .padding({ right: 3 })
-            }, (p: PeriodDef) => `gutter-${p.index}-${p.start}-${p.end}`)
+            }, (p: PeriodRow) => `gutter-${p.index}-${p.start}-${p.end}`)
           }
           .width(PERIOD_GUTTER_WIDTH)
           .height(this.tableHeight())
@@ -888,7 +945,7 @@ export struct TimetableView {
             Stack({ alignContent: Alignment.TopStart }) {
               // 行网格 + 午休留白带
               Column() {
-                ForEach(this.periods(), (p: PeriodDef, idx: number) => {
+                ForEach(this.periods(), (p: PeriodRow, idx: number) => {
                   if (this.bandBefore(idx) !== '') {
                     Column()
                       .width('100%')
@@ -902,21 +959,21 @@ export struct TimetableView {
                       width: { top: StyleConstants.HAIRLINE_HEIGHT },
                       color: Theme.rule(this.uiMode)
                     })
-                }, (p: PeriodDef) => `row-${day}-${p.index}`)
+                }, (p: PeriodRow) => `row-${day}-${p.index}`)
               }
               .width('100%')
 
               // 课程：跨节时跨行；同一天重叠时横向分栏
               Row() {
-                ForEach(this.lanesOfDay(day), (lane: DemoCourse[], laneIndex: number) => {
+                ForEach(this.lanesOfDay(day), (lane: TimetableCourse[], laneIndex: number) => {
                   Stack({ alignContent: Alignment.TopStart }) {
-                    ForEach(lane, (course: DemoCourse) => {
+                    ForEach(lane, (course: TimetableCourse) => {
                       this.PeriodCourseCell(course)
-                    }, (course: DemoCourse) => `cell-${day}-${this.courseKey(course)}`)
+                    }, (course: TimetableCourse) => `cell-${day}-${this.courseKey(course)}`)
                   }
                   .layoutWeight(1)
                   .height(this.tableHeight())
-                }, (lane: DemoCourse[], laneIndex: number) => `lane-${day}-${this.laneKey(day, lane, laneIndex)}`)
+                }, (lane: TimetableCourse[], laneIndex: number) => `lane-${day}-${this.laneKey(day, lane, laneIndex)}`)
               }
               .width('100%')
               .height(this.tableHeight())
@@ -944,7 +1001,7 @@ export struct TimetableView {
 
   /** 课程块：列窄，只放短名；跨节之后高度足够才补教室 */
   @Builder
-  PeriodCourseCell(course: DemoCourse) {
+  PeriodCourseCell(course: TimetableCourse) {
     Column({ space: 2 }) {
       Text(course.name)
         .fontSize(11)
@@ -1025,7 +1082,7 @@ export struct TimetableView {
               ? Theme.surface(this.uiMode)
               : Theme.sub(this.uiMode))
           Row({ space: 2 }) {
-            ForEach(this.coursesOnDay(day).slice(0, 3), (course: DemoCourse) => {
+            ForEach(this.coursesOnDay(day).slice(0, 3), (course: TimetableCourse) => {
               Column()
                 .width(4)
                 .height(4)
@@ -1033,7 +1090,7 @@ export struct TimetableView {
                 .backgroundColor(this.selectedDay === day
                   ? Theme.surface(this.uiMode)
                   : this.edge(course))
-            }, (course: DemoCourse) => `dot-${this.courseKey(course)}`)
+            }, (course: TimetableCourse) => `dot-${this.courseKey(course)}`)
           }
           .height(5)
         }
@@ -1107,15 +1164,15 @@ export struct TimetableView {
           .width('100%')
 
           Row() {
-            ForEach(this.lanes(), (lane: DemoCourse[], laneIndex: number) => {
+            ForEach(this.lanes(), (lane: TimetableCourse[], laneIndex: number) => {
               Stack({ alignContent: Alignment.TopStart }) {
-                ForEach(lane, (course: DemoCourse) => {
+                ForEach(lane, (course: TimetableCourse) => {
                   this.TimelineCourseBlock(course)
-                }, (course: DemoCourse) => this.courseKey(course))
+                }, (course: TimetableCourse) => this.courseKey(course))
               }
               .layoutWeight(1)
               .height(this.gridHeight())
-            }, (lane: DemoCourse[], laneIndex: number) => this.laneKey(this.selectedDay, lane, laneIndex))
+            }, (lane: TimetableCourse[], laneIndex: number) => this.laneKey(this.selectedDay, lane, laneIndex))
           }
           .width('100%')
           .height(this.gridHeight())
@@ -1153,7 +1210,7 @@ export struct TimetableView {
   }
 
   @Builder
-  TimelineCourseBlock(course: DemoCourse) {
+  TimelineCourseBlock(course: TimetableCourse) {
     Column({ space: 1 }) {
       Text(`${course.startTime} – ${course.endTime}`)
         .fontSize(9)

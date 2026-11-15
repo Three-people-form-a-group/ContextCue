@@ -1,7 +1,7 @@
 import { StyleConstants } from '../common/StyleConstants';
 import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
-import { DemoCourse, TimetableDemoData } from '../common/TimetableDemoData';
+import { TimetableCourse } from '../common/TimetableCourse';
 
 const DAY_LABELS: string[] = ['一', '二', '三', '四', '五', '六', '日'];
 const DAY_NUMBERS: number[] = [1, 2, 3, 4, 5, 6, 7];
@@ -21,9 +21,9 @@ const MAX_EDIT_MINUTES: number = 23 * 60 + 59;
 @Component
 export struct CourseEditSheet {
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
-  initial: DemoCourse = TimetableDemoData.EMPTY_COURSE;
+  initial: TimetableCourse = new TimetableCourse('', '', '', '', 1, '00:00', '00:00', [], 0);
   isNew: boolean = true;
-  onSave: (course: DemoCourse) => void = () => {};
+  onSave: (course: TimetableCourse) => void = () => {};
   onClose: () => void = () => {};
 
   @State name: string = '';
@@ -169,7 +169,7 @@ export struct CourseEditSheet {
       this.error = '请填写上课周次，例如 1-16 或 1,3,5';
       return;
     }
-    const next: DemoCourse = new DemoCourse(
+    const next: TimetableCourse = new TimetableCourse(
       this.isNew ? `demo-${Date.now()}` : this.initial.id,
       trimmedName,
       this.teacher.trim(),

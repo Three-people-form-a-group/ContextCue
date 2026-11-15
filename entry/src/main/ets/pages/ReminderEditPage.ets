@@ -10,6 +10,7 @@ import { CreateReminderInput } from '../model/CreateReminderInput';
 import { DraftStore, ReminderDraft } from '../common/DraftStore';
 import { parseTimeInput, TimeParseResult } from '../common/UiTimeInputParser';
 import { ReminderSource, TriggerType } from '../model/ReminderEnums';
+import { AIParseOutcome, AIParseStatus } from '../ai/model/AIParseResult';
 import { TopBar } from '../components/TopBar';
 import { FormItem } from '../components/FormItem';
 
@@ -35,6 +36,13 @@ export struct ReminderEditPage {
   @State typeSel: TriggerType = TriggerType.TIME;
   /** 地点名称（V1 用文本占位，等地点选择器接入） */
   @State sceneInput: string = '';
+  /** 自然语言输入与解析状态 */
+  @State nlText: string = '';
+  @State nlBusy: boolean = false;
+  @State nlMessage: string = '';
+  @State nlRetryable: boolean = false;
+  /** 本次内容是否来自 AI 解析（保存时写入 source） */
+  private sourceFromAi: boolean = false;
 
   /** 编辑模式下的提醒 id；空串表示新建 */
   private originalId: string = '';
@@ -173,6 +181,72 @@ export struct ReminderEditPage {
       }
     }).catch(() => {
     });
+  }
+
+  private placeRelevant(): boolean {
+    return this.typeSel !== TriggerType.TIME;
+  }
+
+  /** 调 AIService 解析自然语言；解析本身不保存任何东西，只回填表单 */
+  private async parseNaturalLanguage(): Promise<void> {
+    const text: string = this.nlText.trim();
+    if (text === '') {
+      this.nlMessage = '先输入一句话，例如“明天下午五点去图书馆还书”';
+      this.nlRetryable = false;
+      return;
+    }
+    this.nlBusy = true;
+    this.nlMessage = '';
+    this.nlRetryable = false;
+    try {
+      const outcome: AIParseOutcome = await getAppServices().aiService.parseReminder(text, {
+        now: Date.now(),
+        timeZone: 'Asia/Shanghai',
+        locale: 'zh-CN'
+      });
+      this.applyParsed(outcome);
+    } catch (_) {
+      this.nlMessage = '解析失败，请稍后重试';
+      this.nlRetryable = true;
+    } finally {
+      this.nlBusy = false;
+    }
+  }
+
+  private applyParsed(outcome: AIParseOutcome): void {
+    let issuesText: string = '';
+    for (let i = 0; i < outcome.issues.length && i < 2; i++) {
+      if (issuesText !== '') {
+        issuesText += '；';
+      }
+      issuesText += outcome.issues[i].message;
+    }
+    if (outcome.draft !== undefined) {
+      const draft: CreateReminderInput = outcome.draft;
+      if (draft.content.trim() !== '') {
+        this.titleInput = draft.content;
+      }
+      this.typeSel = draft.triggerType;
+      if (draft.triggerTime !== undefined) {
+        this.selectedTimeMs = draft.triggerTime;
+      }
+      if (draft.sceneName !== undefined && draft.sceneName !== '') {
+        this.sceneInput = draft.sceneName;
+      }
+      this.sourceFromAi = true;
+      this.saveError = '';
+    }
+    if (outcome.status === AIParseStatus.READY) {
+      this.nlMessage = '已提取，请核对下面的内容、提醒方式' +
+        (this.timeRelevant() ? '、时间' : '') + (this.placeRelevant() ? '、地点' : '');
+      this.nlRetryable = false;
+    } else if (outcome.status === AIParseStatus.NEEDS_CONFIRMATION) {
+      this.nlMessage = issuesText === '' ? '已提取部分信息，请补充确认' : `需要确认：${issuesText}`;
+      this.nlRetryable = true;
+    } else {
+      this.nlMessage = issuesText === '' ? '没能理解这句话，换个说法再试试' : issuesText;
+      this.nlRetryable = true;
+    }
   }
 
   private triggerType(): string {
@@ -330,7 +404,7 @@ export struct ReminderEditPage {
       triggerTime: this.timeRelevant() ? this.selectedTimeMs : undefined,
       sceneId: this.typeSel === TriggerType.TIME ? undefined : (this.originalSceneId === '' ? undefined : this.originalSceneId),
       sceneName: this.typeSel === TriggerType.TIME ? undefined : this.sceneInput.trim(),
-      source: this.originalSource
+      source: this.sourceFromAi ? ReminderSource.AI : this.originalSource
     };
     this.submit(input);
   }
@@ -363,12 +437,15 @@ export struct ReminderEditPage {
         Scroll() {
           Column() {
             this.MastheadBlock()
-            this.ContentSection()
-            // 时间区块始终保留（地点提醒下缩成一行说明）：
-            // 整段消失会让 02 编号缺一个、下面的内容整块上跳
-            this.TimeSection()
+            this.NlSection()
             this.TriggerSection()
-            this.EditorNote()
+            // 时间/地点按提醒方式自动显隐；编号跟着可见区块顺延
+            if (this.timeRelevant()) {
+              this.TimeSection()
+            }
+            if (this.placeRelevant()) {
+              this.PlaceSection()
+            }
             this.SaveBlock()
           }
           .alignItems(HorizontalAlign.Start)
@@ -509,11 +586,67 @@ export struct ReminderEditPage {
   }
 
   @Builder
-  ContentSection() {
+  NlSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
       this.SectionNumber('01', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('提醒内容', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
+        this.SectionHead('自然语言解析', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mint') : Theme.text(this.uiMode))
+
+        TextArea({
+          placeholder: '例如：明天下午五点去图书馆还书',
+          text: this.nlText
+        })
+          .onChange((value: string) => {
+            this.nlText = value;
+          })
+          .fontSize(StyleConstants.FONT_BODY)
+          .fontWeight(FontWeight.Regular)
+          .fontColor(Theme.text(this.uiMode))
+          .placeholderColor(Theme.sub(this.uiMode))
+          .backgroundColor(Color.Transparent)
+          .padding({
+            left: 8,
+            right: 8,
+            top: StyleConstants.SPACE_SM,
+            bottom: StyleConstants.SPACE_SM
+          })
+          .lineHeight(26)
+          .height(84)
+          .width('100%')
+          .border({ width: { bottom: 1 }, color: Theme.rule(this.uiMode) })
+
+        Row({ space: 10 }) {
+          Text(this.nlBusy ? '解析中…' : '解析')
+            .fontSize(StyleConstants.FONT_SECTION_INDEX)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.nlBusy ? Theme.sub(this.uiMode) : Theme.text(this.uiMode))
+            .decoration({ type: TextDecorationType.Underline })
+            .height(StyleConstants.TOUCH_TARGET_MIN)
+            .padding({ left: 8, right: 8 })
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              if (!this.nlBusy) {
+                this.parseNaturalLanguage();
+              }
+            })
+          Text(this.nlMessage !== ''
+            ? this.nlMessage
+            : '把一句话解析成时间、地点和事件，结果可以在下面微调')
+            .fontSize(10)
+            .fontColor(this.nlRetryable ? Theme.alert(this.uiMode) : Theme.sub(this.uiMode))
+            .layoutWeight(1)
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Text('提醒内容（可微调）')
+          .fontSize(StyleConstants.FONT_SECTION_INDEX)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.sub(this.uiMode))
+          .letterSpacing(1)
+          .margin({ top: StyleConstants.SPACE_SM })
 
         TextArea({
           placeholder: '输入提醒内容',
@@ -550,44 +683,34 @@ export struct ReminderEditPage {
   @Builder
   TimeSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('02', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
+      this.SectionNumber('03', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
         this.SectionHead('日期与时间', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_mustard') : Theme.text(this.uiMode))
-        if (this.timeRelevant()) {
-          FormItem({
-            label: '日期',
-            value: this.dateLabel(),
-            placeholder: '',
-            onTap: () => {
-              this.pickDate();
-            }
-          })
-          FormItem({
-            label: '时间',
-            value: this.timeLabel(),
-            placeholder: '',
-            highlightValue: true,
-            onTap: () => {
-              this.pickTime();
-            }
-          })
-          if (this.isPastSelected()) {
-            Text('所选时间已过去，请重新选择')
-              .fontSize(StyleConstants.FONT_SECTION_INDEX)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(Theme.text(this.uiMode))
-              .margin({ top: StyleConstants.SPACE_XS })
+        FormItem({
+          label: '日期',
+          value: this.dateLabel(),
+          placeholder: '',
+          onTap: () => {
+            this.pickDate();
           }
-          this.ManualTimeRow()
-        } else {
-          Text('地点提醒不含固定时间')
-            .fontSize(StyleConstants.FONT_BODY_SM)
-            .fontColor(Theme.sub(this.uiMode))
-            .padding({
-              top: StyleConstants.SPACE_MD,
-              bottom: StyleConstants.SPACE_MD
-            })
+        })
+        FormItem({
+          label: '时间',
+          value: this.timeLabel(),
+          placeholder: '',
+          highlightValue: true,
+          onTap: () => {
+            this.pickTime();
+          }
+        })
+        if (this.isPastSelected()) {
+          Text('所选时间已过去，请重新选择')
+            .fontSize(StyleConstants.FONT_SECTION_INDEX)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.text(this.uiMode))
+            .margin({ top: StyleConstants.SPACE_XS })
         }
+        this.ManualTimeRow()
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -652,9 +775,9 @@ export struct ReminderEditPage {
   @Builder
   TriggerSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('03', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
+      this.SectionNumber('02', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
-        this.SectionHead('触发条件', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
+        this.SectionHead('提醒方式', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sky') : Theme.text(this.uiMode))
 
         Row({ space: 8 }) {
           this.TypeChip('时间', TriggerType.TIME)
@@ -663,34 +786,6 @@ export struct ReminderEditPage {
         }
         .width('100%')
         .margin({ top: 4 })
-
-        if (this.typeSel !== TriggerType.TIME) {
-          TextInput({
-            placeholder: '地点名称，例如 家 / 公司',
-            text: this.sceneInput
-          })
-            .onChange((value: string) => {
-              this.sceneInput = value;
-              this.saveError = '';
-            })
-            .fontSize(StyleConstants.FONT_BODY)
-            .fontColor(Theme.text(this.uiMode))
-            .placeholderColor(Theme.sub(this.uiMode))
-            .backgroundColor(Color.Transparent)
-            .padding({ left: 0, right: 0 })
-            .height(44)
-            .width('100%')
-          Column()
-            .width('100%')
-            .height(StyleConstants.HAIRLINE_HEIGHT)
-            .backgroundColor(Theme.rule(this.uiMode))
-
-          Text('地点提醒需要定位与场景服务；当前阶段只保存名称，等公共层接入后生效。')
-            .fontSize(9)
-            .fontColor(Theme.sub(this.uiMode))
-            .opacity(0.8)
-            .maxLines(2)
-        }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -732,33 +827,40 @@ export struct ReminderEditPage {
       })
   }
 
+  /** 地点区块：编号跟着"时间是否可见"顺延（有时间为 04，否则为 03） */
   @Builder
-  EditorNote() {
+  PlaceSection() {
     Row({ space: StyleConstants.SPACE_MD }) {
-      this.SectionNumber('04', Theme.ink(this.uiMode))
+      this.SectionNumber(this.timeRelevant() ? '04' : '03',
+        this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sage') : Theme.text(this.uiMode))
       Column({ space: StyleConstants.SPACE_XS }) {
-        Row({ space: StyleConstants.SPACE_SM }) {
-          Column()
-            .width(3)
-            .height(14)
-            .backgroundColor(Theme.accent(this.uiMode))
-          Text('AI 辅助')
-            .fontSize(StyleConstants.FONT_TITLE_LG)
-            .fontWeight(900)
-            .fontColor(Theme.text(this.uiMode))
-          Blank()
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
+        this.SectionHead('地点', this.uiMode === UiMode.JOURNAL ? $r('app.color.accent_sage') : Theme.text(this.uiMode))
 
-        Text('接入 AI 模块后，这里会根据自然语言生成时间与地点建议')
-          .fontSize(StyleConstants.FONT_BODY_SM)
-          .fontColor(Theme.sub(this.uiMode))
-          .maxLines(3)
-          .padding(StyleConstants.SPACE_MD)
+        TextInput({
+          placeholder: '地点名称，例如 家 / 公司',
+          text: this.sceneInput
+        })
+          .onChange((value: string) => {
+            this.sceneInput = value;
+            this.saveError = '';
+          })
+          .fontSize(StyleConstants.FONT_BODY)
+          .fontColor(Theme.text(this.uiMode))
+          .placeholderColor(Theme.sub(this.uiMode))
+          .backgroundColor(Color.Transparent)
+          .padding({ left: 0, right: 0 })
+          .height(44)
           .width('100%')
-          .backgroundColor(Theme.subtleBg(this.uiMode))
-          .border({ width: { left: 3 }, color: $r('app.color.accent_mint') })
+        Column()
+          .width('100%')
+          .height(StyleConstants.HAIRLINE_HEIGHT)
+          .backgroundColor(Theme.rule(this.uiMode))
+
+        Text('地点提醒需要定位与场景服务；当前只保存名称，等位置模块接入后生效。')
+          .fontSize(9)
+          .fontColor(Theme.sub(this.uiMode))
+          .opacity(0.8)
+          .maxLines(2)
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)

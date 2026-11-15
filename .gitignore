@@ -1,11 +1,18 @@
 # Build output
 build/
 
+# HarmonyOS local build state
+.hvigor/
+local.properties
+
+# DevEco App Analyzer artifacts
+.appanalyzer/
+
+# Local AI provider credentials (NEVER commit; see docs/team/真实AI接入准备)
+/ai.config.local.json
+
 # IDE files
 .idea/
-
-# Local configuration (contains local SDK/device paths and must not be committed)
-local.properties
 
 # HarmonyOS dependencies
 oh_modules/
@@ -18,9 +25,6 @@ oh_modules/
 
 # Node modules
 node_modules/
-
-# Hvigor cache
-.hvigor/
 
 # TypeScript build cache
 .cache/

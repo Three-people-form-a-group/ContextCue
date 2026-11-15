@@ -475,7 +475,8 @@ export struct ReminderEditPage {
     if (!result.success) {
       this.saveError = result.error === undefined ? '保存失败' : result.error.message;
       if (result.error !== undefined && result.error.code === 'TRIGGER_REGISTRATION_ERROR') {
-        this.saveError += '（到点提醒需要系统通知权限：设置 → 通知和状态栏 → ContextCue → 允许通知）';
+        this.saveError += '（到点提醒需要系统通知权限：设置 → 通知和状态栏 → ContextCue → 允许通知；' +
+          '若已开启仍失败，请确认真机/模拟器安装的是签名包）';
       }
       return;
     }

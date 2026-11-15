@@ -43,6 +43,8 @@ export struct ReminderEditPage {
   @State nlRetryable: boolean = false;
   /** 本次内容是否来自 AI 解析（保存时写入 source） */
   private sourceFromAi: boolean = false;
+  /** AI 解析解析出来的场景 id；用户手动改地点名后清空 */
+  private aiSceneId: string = '';
 
   /** 编辑模式下的提醒 id；空串表示新建 */
   private originalId: string = '';
@@ -286,6 +288,7 @@ export struct ReminderEditPage {
       if (draft.sceneName !== undefined && draft.sceneName !== '') {
         this.sceneInput = draft.sceneName;
       }
+      this.aiSceneId = draft.sceneId === undefined ? '' : draft.sceneId;
       this.sourceFromAi = true;
       this.saveError = '';
     }
@@ -437,7 +440,9 @@ export struct ReminderEditPage {
       content: content,
       triggerType: this.typeSel,
       triggerTime: this.timeRelevant() ? this.selectedTimeMs : undefined,
-      sceneId: this.typeSel === TriggerType.TIME ? undefined : (this.originalSceneId === '' ? undefined : this.originalSceneId),
+      sceneId: this.typeSel === TriggerType.TIME ? undefined
+        : (this.aiSceneId !== '' ? this.aiSceneId
+          : (this.originalSceneId === '' ? undefined : this.originalSceneId)),
       sceneName: this.typeSel === TriggerType.TIME ? undefined : this.sceneInput.trim(),
       source: this.sourceFromAi ? ReminderSource.AI : this.originalSource
     };
@@ -919,6 +924,7 @@ export struct ReminderEditPage {
         })
           .onChange((value: string) => {
             this.sceneInput = value;
+            this.aiSceneId = '';
             this.saveError = '';
           })
           .fontSize(StyleConstants.FONT_BODY)

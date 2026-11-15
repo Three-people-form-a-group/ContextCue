@@ -15,7 +15,7 @@ import { AppServices, AppRuntimeMode, createAppServices } from './AppServices';
 
 // 开发联调内置样例：让页面在无真实 Key 时联调 AI 三态展示（READY/待确认/FAILED）。
 // 时间用 epoch 数字格式（解析器兼容路径），构造时动态计算以保持恒为未来。
-function buildDevFixtures(): Map<string, string> {
+export function buildDevFixtures(): Map<string, string> {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   tomorrow.setHours(14, 0, 0, 0);

@@ -17,6 +17,7 @@ import { TimeTriggerPort } from '../reminder/contract/TimeTriggerPort';
 import { LocationTriggerPort } from '../reminder/contract/LocationTriggerPort';
 import { AppServices, AppRuntimeMode, createAppServices } from './AppServices';
 import { getAppServices } from './AppServiceRegistry';
+import { buildDevFixtures } from './DevelopmentServices';
 
 /**
  * 正式组装（INTEGRATED）：罗鸿程的系统时间/通知端口 + 兰铮的定位适配器与场景目录。
@@ -45,7 +46,7 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   platform.recoverOrphanFences().catch((): void => {});
 
   const aiProvider = config === undefined
-    ? new FakeAIModelProvider(new Map<string, string>())
+    ? new FakeAIModelProvider(buildDevFixtures())
     : new ZhipuAIModelProvider(config, new OhosAIChatClient());
 
   const services = createAppServices({

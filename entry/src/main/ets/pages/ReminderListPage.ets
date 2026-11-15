@@ -520,7 +520,7 @@ export struct ReminderListPage {
 
         Column({ space: 3 }) {
           Row({ space: 6 }) {
-            if (this.uiMode === UiMode.MINIMAL) {
+            if (this.uiMode === UiMode.MINIMAL && groupIndex > 0) {
               Column()
                 .width(groupIndex === 0 ? 8 : 7)
                 .height(groupIndex === 0 ? 8 : 7)

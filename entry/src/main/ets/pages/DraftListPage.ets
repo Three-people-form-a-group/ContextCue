@@ -114,9 +114,13 @@ export struct DraftListPage {
           this.confirmDelete(item);
         })
 
+      // 和「删除」同高、同垂直居中，两者落在同一条水平线上
       Text('›')
         .fontSize(15)
         .fontColor(Theme.sub(this.uiMode))
+        .height(StyleConstants.TOUCH_TARGET_MIN)
+        .textAlign(TextAlign.Center)
+        .padding({ left: 2, right: 2 })
         .accessibilityLevel('no')
     }
     .width('100%')

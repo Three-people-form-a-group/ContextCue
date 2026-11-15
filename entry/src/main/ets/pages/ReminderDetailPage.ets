@@ -287,12 +287,6 @@ export struct ReminderDetailPage {
         .width('100%')
         .margin({ top: StyleConstants.SPACE_XS })
 
-      // 栏线有意只走到 62%，与右侧负空间形成中断
-      Column()
-        .width(StyleConstants.RULE_SHORT_WIDTH)
-        .height(StyleConstants.RULE_MEDIUM)
-        .backgroundColor(Theme.text(this.uiMode))
-        .margin({ top: StyleConstants.SPACE_SM })
     }
     .alignItems(HorizontalAlign.Start)
     .width('100%')
@@ -342,15 +336,6 @@ export struct ReminderDetailPage {
   }
 
   @Builder
-  MetaDivider() {
-    Column()
-      .width('100%')
-      .height(StyleConstants.HAIRLINE_HEIGHT)
-      .backgroundColor($r('app.color.detail_note'))
-      .opacity(0.35)
-  }
-
-  @Builder
   CompletionStatus() {
     if (isCompleted(this.card)) {
       Row({ space: 8 }) {
@@ -366,7 +351,6 @@ export struct ReminderDetailPage {
       .width('100%')
       .padding({ top: 8, bottom: 8 })
       .margin({ top: 12 })
-      .border({ width: { top: 1, bottom: 1 }, color: Theme.rule(this.uiMode) })
     }
   }
 
@@ -378,14 +362,16 @@ export struct ReminderDetailPage {
         .height(StyleConstants.RULE_MEDIUM)
         .backgroundColor(Theme.text(this.uiMode))
       this.MetaRow('触发类型', reminderTypeText(this.card), false)
-      this.MetaDivider()
       this.MetaRow('提醒来源', reminderSourceText(this.card), false)
-      this.MetaDivider()
       this.MetaRow('当前状态', reminderStatusText(this.card), false)
-      this.MetaDivider()
       this.MetaRow('地点', reminderLocationText(this.card), hasLocation(this.card))
-      this.MetaDivider()
       if (this.uiMode === UiMode.JOURNAL) {
+        Column()
+          .width('100%')
+          .height(StyleConstants.HAIRLINE_HEIGHT)
+          .backgroundColor(Theme.rule(this.uiMode))
+          .margin({ top: StyleConstants.SPACE_SM, bottom: StyleConstants.SPACE_SM })
+
         Row() {
           Text('纸张')
             .fontSize(StyleConstants.FONT_SECTION_INDEX)
@@ -407,7 +393,6 @@ export struct ReminderDetailPage {
         .onClick(() => {
           this.showPaperPicker = true;
         })
-        this.MetaDivider()
 
         Row() {
           Text('涂鸦')
@@ -430,7 +415,6 @@ export struct ReminderDetailPage {
         .onClick(() => {
           this.showDoodle = true;
         })
-        this.MetaDivider()
 
         Row() {
           Text('文字')
@@ -454,7 +438,6 @@ export struct ReminderDetailPage {
           this.textHidden = !this.textHidden;
           PaperStore.setTextHidden(getContext(this), this.card.id, this.textHidden);
         })
-        this.MetaDivider()
       }
     }
     .width('100%')
@@ -516,13 +499,6 @@ export struct ReminderDetailPage {
   @Builder
   EditEntryBlock() {
     Column({ space: StyleConstants.SPACE_SM }) {
-      Column()
-        .width('100%')
-        .height(StyleConstants.HAIRLINE_HEIGHT)
-        .backgroundColor($r('app.color.detail_note'))
-        .opacity(0.35)
-        .margin({ bottom: StyleConstants.SPACE_MD })
-
       // 炭黑排版动作：与头版同一套语言，不再使用橙色通用按钮
       Row() {
         Row({ space: StyleConstants.SPACE_MD }) {

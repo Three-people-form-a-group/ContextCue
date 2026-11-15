@@ -106,9 +106,10 @@ export struct NoteLayoutView {
       return this.featured ? 26 : 24;
     }
     if (name === PART_PLACE) {
-      return this.featured ? 12 : 14;
+      return 14;
     }
-    return this.featured ? 20 : 44;
+    // 时间块始终是最大的一层（之前首条被压到 20，整体显得不够大胆）
+    return 44;
   }
 
   private lineHeightOf(name: string): number {

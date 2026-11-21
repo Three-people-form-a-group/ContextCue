@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "label"
+    },
+    {
+      "name": "location_permission_reason",
+      "value": "用于判断你是否已到达提醒中的地点，并在到达时提醒你。"
     }
   ]
 }

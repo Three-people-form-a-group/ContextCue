@@ -126,6 +126,13 @@ export default function locationAdapterTest() {
       try { await adapter.register(reminder('r')); } catch (_) { failed = true; }
       expect(failed).assertTrue();
     });
+    it('register_auto_starts_without_explicit_start', 0, async () => {
+      const platform = new FakePlatform();
+      const adapter = new LocationReminderAdapter(await makeCatalog(), platform, new RecordingSink(), () => 100000, () => {}, alwaysReady);
+      await adapter.register(reminder('r'));
+      expect(platform.callbacks.size).assertEqual(1);
+      await adapter.stop();
+    });
     it('registers_idempotently_and_ignores_late_callback_after_unregister', 0, async () => {
       const platform = new FakePlatform();
       const sink = new RecordingSink();

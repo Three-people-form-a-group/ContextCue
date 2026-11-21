@@ -31,6 +31,9 @@ export class LocationPermissionManager {
   constructor(gateway: PermissionGateway) { this.gateway = gateway; }
 
   async request(): Promise<void> {
+    // V1 requests foreground precise location only. LOCATION_IN_BACKGROUND is not needed to
+    // register a GNSS fence, cannot enable killed-process delivery, and would require a separate
+    // Settings flow. Add it only when background isInsideScene checks become a supported feature.
     if (!this.gateway.hasPreciseLocation()) { await this.gateway.requestPreciseLocation(); }
     await this.checkReady();
   }

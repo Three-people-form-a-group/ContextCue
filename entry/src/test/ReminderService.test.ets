@@ -90,13 +90,14 @@ class TestLocationPort implements LocationTriggerPort {
   registered: string[] = [];
   unregistered: string[] = [];
   failRegister: boolean = false;
+  registerError: string = 'register failed';
   failUnregister: boolean = false;
   events?: string[];
 
   async register(reminder: Reminder): Promise<void> {
     this.events?.push('register:' + reminder.content);
     if (this.failRegister) {
-      throw new Error('register failed');
+      throw new Error(this.registerError);
     }
     this.registered.push(reminder.id);
   }
@@ -438,6 +439,34 @@ export default function reminderServiceTest() {
       const deleted = await service.delete('r-fail-2');
       expect(deleted.error?.code).assertEqual('TRIGGER_CLEANUP_ERROR');
       expect((await repository.findById('r-fail-2'))?.status).assertEqual(ReminderStatus.ACTIVE);
+    });
+
+    it('surfaces stable location registration codes with retry guidance', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-loc-code');
+      const input: CreateReminderInput = { content: '带电脑', triggerType: TriggerType.LOCATION,
+        sceneId: 'scene-1', source: ReminderSource.MANUAL };
+      location.failRegister = true;
+      location.registerError = 'LOCATION_PERMISSION_DENIED';
+      let result = await service.create(input);
+      expect(result.error?.code).assertEqual('LOCATION_PERMISSION_DENIED');
+      expect(result.error?.retryable).assertFalse();
+      location.registerError = 'LOCATION_SWITCH_OFF';
+      result = await service.create(input);
+      expect(result.error?.code).assertEqual('LOCATION_SWITCH_OFF');
+      expect(result.error?.retryable).assertTrue();
+      location.registerError = 'LOCATION_FENCE_REGISTRATION_FAILED';
+      result = await service.create(input);
+      expect(result.error?.code).assertEqual('LOCATION_FENCE_REGISTRATION_FAILED');
+      expect(result.error?.retryable).assertTrue();
+      location.registerError = 'LOCATION_WGS84_FENCE_UNSUPPORTED';
+      result = await service.create(input);
+      expect(result.error?.code).assertEqual('LOCATION_WGS84_FENCE_UNSUPPORTED');
+      expect(result.error?.retryable).assertFalse();
+      location.failRegister = false;
+      expect((await service.create(input)).success).assertTrue();
     });
 
     it('repeated terminal-state actions leave repository and ports unchanged', 0, async () => {

@@ -22,7 +22,17 @@ export class HarmonyLocationApi implements LocationNativeApi {
     return geoLocationManager.getCurrentLocation(request);
   }
   supportsWgs84(): boolean {
-    return geoLocationManager.getGeofenceSupportedCoordTypes().includes(geoLocationManager.CoordinateSystemType.WGS84);
+    try {
+      // API 26+ exposes an explicit service check. The guard keeps API 24 devices working.
+      if (typeof geoLocationManager.isGnssFenceServiceSupported === 'function' &&
+        !geoLocationManager.isGnssFenceServiceSupported()) {
+        return false;
+      }
+      return geoLocationManager.getGeofenceSupportedCoordTypes().includes(geoLocationManager.CoordinateSystemType.WGS84);
+    } catch (_) {
+      // Emulators and devices without a GNSS fence implementation can throw or return no types.
+      return false;
+    }
   }
   async add(request: geoLocationManager.GnssGeofenceRequest): Promise<number> {
     return geoLocationManager.addGnssGeofence(request);
@@ -73,13 +83,19 @@ export class HarmonyLocationPlatform implements LocationPlatform {
         }
       }
     };
-    // Deliberately omit notifications: only TriggerCoordinator can send the final notification.
+    // V1 only supports geofence delivery while this process is alive.
+    // Deliberately omit notifications and fenceExtensionAbilityName: adding either would let the
+    // system act independently of TriggerCoordinator (duplicate notifications, BOTH-condition
+    // bypass, and no reminder state update). See docs/location/geofence-lifecycle.md.
     return this.native.add(request);
   }
 
   async removeFence(id: number): Promise<void> { await this.native.remove(id); }
 
-  /** V1 owns all GNSS fences in this app. Call once on a fresh process, before registering reminders. */
+  /**
+   * V1 owns all GNSS fences in this app. Call once on a fresh process, before registering reminders.
+   * Events that fired while the process was dead are not replayed, so they are lost by design.
+   */
   async recoverOrphanFences(): Promise<void> {
     await this.checkReady();
     const fences = await this.native.active();

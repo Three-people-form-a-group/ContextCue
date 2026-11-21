@@ -42,6 +42,19 @@ export default function sceneCatalogTest() {
       expect((await catalog.resolveByName('')).status).assertEqual(SceneResolveStatus.NOT_FOUND);
       expect((await catalog.resolveByName('商店')).status).assertEqual(SceneResolveStatus.NOT_FOUND);
     });
+    it('enforces_geofence_friendly_radius_range', 0, async () => {
+      let sequence: number = 0;
+      const catalog = new SceneCatalog(new MemoryTextStorage(), () => 1000,
+        () => 's' + (++sequence), async () => false);
+      let rejected: number = 0;
+      for (const radius of [99.9, 0, -1, 5000.1, Number.POSITIVE_INFINITY, Number.NaN]) {
+        try { await catalog.create({ name: '边界测试', latitude: 31, longitude: 121, radius: radius }); }
+        catch (_) { rejected++; }
+      }
+      expect(rejected).assertEqual(6);
+      expect((await catalog.create({ name: '下限', latitude: 31, longitude: 121, radius: 100 })).radius).assertEqual(100);
+      expect((await catalog.create({ name: '上限', latitude: 31, longitude: 121, radius: 5000 })).radius).assertEqual(5000);
+    });
     it('updates_and_deletes_unreferenced_scene', 0, async () => {
       const catalog = new SceneCatalog(new MemoryTextStorage(), () => 1000, () => 's', async () => false);
       await catalog.create({ name: '家', latitude: 31, longitude: 121, radius: 100 });

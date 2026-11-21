@@ -241,14 +241,17 @@ export default function reminderServiceTest() {
       expect(repository.saves).assertEqual(savesAfterTrigger);
     });
 
-    it('completes a triggered reminder but never re-enables it', 0, async () => {
+    it('completes a triggered reminder then supports undo-complete back to ACTIVE', 0, async () => {
       const repository = new TestRepository();
       const service = new ReminderService(repository, new TestTimePort(), new TestLocationPort(), () => 3000, () => 'r-8');
       const reminder: Reminder = { id: 'r-8', content: '带电脑', triggerType: TriggerType.TIME, triggerTime: 2000, status: ReminderStatus.TRIGGERED, source: ReminderSource.MANUAL, createdAt: 1000, triggeredAt: 2500 };
       await repository.save(reminder);
       expect((await service.complete('r-8')).data?.completedAt).assertEqual(3000);
-      expect((await service.enable('r-8')).error?.code).assertEqual('INVALID_STATUS_TRANSITION');
-      expect((await repository.findById('r-8'))?.status).assertEqual(ReminderStatus.COMPLETED);
+      // 撤销完成：COMPLETED → ACTIVE 已允许（罗鸿程 2026-11-15 语义），时间戳必须清空
+      const reenabled = await service.enable('r-8');
+      expect(reenabled.data?.status).assertEqual(ReminderStatus.ACTIVE);
+      expect(reenabled.data?.completedAt).assertUndefined();
+      expect(reenabled.data?.triggeredAt).assertUndefined();
       expect((await service.complete('r-8')).data?.completedAt).assertEqual(3000);
     });
 

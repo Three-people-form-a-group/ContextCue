@@ -15,12 +15,18 @@ interface SceneDocument {
   scenes: Scene[];
 }
 
+// A GNSS fix is not room-level precise. Below 100 m, normal drift can cross the boundary
+// repeatedly; above 5 km the "scene" stops describing a place the user is actually visiting.
+export const SCENE_MIN_RADIUS_METERS: number = 100;
+export const SCENE_MAX_RADIUS_METERS: number = 5000;
+
 function validateInput(input: SceneInput): void {
   if (typeof input.name !== 'string' || input.name.trim().length === 0 || input.name.trim().length > 100) {
     throw new Error('SCENE_INVALID_NAME');
   }
   validateCoordinates(input.latitude, input.longitude);
-  if (!Number.isFinite(input.radius) || input.radius <= 0) {
+  if (!Number.isFinite(input.radius) || input.radius < SCENE_MIN_RADIUS_METERS ||
+    input.radius > SCENE_MAX_RADIUS_METERS) {
     throw new Error('LOCATION_INVALID_RADIUS');
   }
 }
@@ -84,6 +90,8 @@ export class SceneCatalog implements SceneResolver {
     // Copy before awaiting so callers cannot change the validation input mid-operation.
     const draft: SceneInput = { name: input.name, latitude: input.latitude, longitude: input.longitude, radius: input.radius };
     validateInput(draft);
+    // Duplicate names are intentional: two "图书馆" can be different places. resolveByName()
+    // reports AMBIGUOUS and the AI flow asks the user to choose instead of guessing.
     return this.exclusive(async (): Promise<Scene> => {
       const scenes = await this.load();
       const id = this.newId();

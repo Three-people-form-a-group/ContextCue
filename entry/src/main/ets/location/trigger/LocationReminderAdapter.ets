@@ -40,7 +40,10 @@ function snapshot(reminder: Reminder): Reminder {
     createdAt: reminder.createdAt, triggeredAt: reminder.triggeredAt, completedAt: reminder.completedAt };
 }
 
-/** No resources are acquired at construction. start() is an integration lifecycle operation. */
+/**
+ * No resources are acquired at construction. start() is an integration lifecycle operation.
+ * register() also starts lazily, because the user can grant location permission after app launch.
+ */
 export class LocationReminderAdapter implements LocationTriggerPort {
   private catalog: SceneCatalog;
   private platform: LocationPlatform;
@@ -71,10 +74,14 @@ export class LocationReminderAdapter implements LocationTriggerPort {
     try { await action(); } finally { release(); }
   }
 
+  private async ensureStarted(): Promise<void> {
+    await this.platform.checkReady();
+    this.started = true;
+  }
+
   async start(): Promise<void> {
     await this.exclusive(async (): Promise<void> => {
-      await this.platform.checkReady();
-      this.started = true;
+      await this.ensureStarted();
     });
   }
 
@@ -102,8 +109,10 @@ export class LocationReminderAdapter implements LocationTriggerPort {
       throw new Error('LOCATION_INVALID_REGISTRATION');
     }
     await this.exclusive(async (): Promise<void> => {
-      if (!this.started) { throw new Error('LOCATION_NOT_STARTED'); }
-      await this.platform.checkReady();
+      // Permission is granted at runtime, so the composition root cannot reliably pre-start us.
+      // Lazily start inside the gate: calling start() here would await our own gate forever.
+      if (!this.started) { await this.ensureStarted(); }
+      else { await this.platform.checkReady(); }
       const existing = this.registrations.get(id);
       if (existing !== undefined) {
         if (existing.sceneId !== sceneId) { throw new Error('LOCATION_UNREGISTER_BEFORE_REPLACE'); }

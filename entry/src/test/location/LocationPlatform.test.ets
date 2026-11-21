@@ -70,6 +70,8 @@ export default function locationPlatformTest() {
       expect(native.request?.geofence.latitude).assertEqual(31);
       expect(native.request?.geofence.radius).assertEqual(100);
       expect(native.request?.notifications === undefined).assertTrue();
+      // V1 cannot deliver fence events after process death, so it must not delegate to an extension.
+      expect(native.request?.fenceExtensionAbilityName === undefined).assertTrue();
       await platform.removeFence(id);
       expect(native.removed).assertEqual(7);
     });

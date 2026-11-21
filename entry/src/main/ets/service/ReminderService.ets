@@ -11,6 +11,43 @@ function serviceError(code: string, message: string, retryable: boolean): Operat
   return { code: code, message: message, retryable: retryable };
 }
 
+// Stable location codes end up as operation codes so pages can tell the user what to fix.
+// TRIGGER_REGISTRATION_ERROR.retryable is meaningless for these: permission denial and an
+// unsupported device never succeed by pressing "retry" again.
+const LOCATION_OPERATION_ERRORS: Map<string, OperationError> = new Map<string, OperationError>();
+
+function registerLocationOperationError(code: string, message: string, retryable: boolean): void {
+  LOCATION_OPERATION_ERRORS.set(code, { code: code, message: message, retryable: retryable });
+}
+
+registerLocationOperationError('LOCATION_PERMISSION_DENIED', '未获得精确位置权限，请到设置中开启后重试', false);
+registerLocationOperationError('LOCATION_SWITCH_OFF', '系统定位开关未开启，请开启后重试', true);
+registerLocationOperationError('LOCATION_WGS84_FENCE_UNSUPPORTED', '当前设备不支持地理围栏提醒', false);
+registerLocationOperationError('LOCATION_FENCE_REGISTRATION_FAILED', '地点围栏注册失败，请稍后重试', true);
+registerLocationOperationError('LOCATION_NOT_STARTED', '定位服务尚未启动，请重试', true);
+registerLocationOperationError('LOCATION_INVALID_REGISTRATION', '地点提醒参数不完整', false);
+registerLocationOperationError('LOCATION_UNREGISTER_BEFORE_REPLACE', '请先删除原地点提醒再重新创建', false);
+registerLocationOperationError('LOCATION_FIX_UNUSABLE', '当前位置不可用，请稍后重试', true);
+registerLocationOperationError('LOCATION_FIX_UNCERTAIN', '当前位置靠近地点边界，请靠近或远离一些后重试', true);
+registerLocationOperationError('LOCATION_STOP_CLEANUP_FAILED', '地点围栏清理失败，请稍后重试', true);
+registerLocationOperationError('SCENE_NOT_FOUND', '地点不存在，请重新选择', false);
+
+function locationErrorCode(error: Object | undefined): string {
+  if (error === undefined) { return ''; }
+  const message = error instanceof Error ? error.message : String(error);
+  return message.trim();
+}
+
+/** Maps an adapter failure to the closest stable code. Unknown failures stay retryable. */
+function registrationError(error: Object | undefined): OperationError {
+  const code = locationErrorCode(error);
+  const known = LOCATION_OPERATION_ERRORS.get(code);
+  if (known !== undefined) {
+    return { code: known.code, message: known.message, retryable: known.retryable };
+  }
+  return serviceError('TRIGGER_REGISTRATION_ERROR', '触发条件注册失败', true);
+}
+
 function usesTime(reminder: Reminder): boolean {
   return reminder.triggerType === TriggerType.TIME || reminder.triggerType === TriggerType.BOTH;
 }
@@ -84,9 +121,9 @@ export class ReminderService {
 
     try {
       await this.register(reminder);
-    } catch (_) {
+    } catch (error) {
       await this.cleanup(reminder);
-      return { success: false, error: serviceError('TRIGGER_REGISTRATION_ERROR', '触发条件注册失败', true) };
+      return { success: false, error: registrationError(error) };
     }
 
     try {
@@ -236,10 +273,12 @@ export class ReminderService {
       }
       try {
         await this.register(next);
-      } catch (_) {
+      } catch (error) {
         await this.cleanup(next);
         await this.restore(current);
-        return { success: false, error: serviceError('TRIGGER_REGISTRATION_ERROR', '新触发条件注册失败', true) };
+        const failure = registrationError(error);
+        return { success: false, error: { code: failure.code, message: '新触发条件注册失败：' + failure.message,
+          retryable: failure.retryable } };
       }
     }
 
@@ -313,9 +352,9 @@ export class ReminderService {
       const active = withStatus(current, ReminderStatus.ACTIVE);
       try {
         await this.register(active);
-      } catch (_) {
+      } catch (error) {
         await this.cleanup(active);
-        return { success: false, error: serviceError('TRIGGER_REGISTRATION_ERROR', '触发条件注册失败', true) };
+        return { success: false, error: registrationError(error) };
       }
       try {
         await this.repository.save(active);

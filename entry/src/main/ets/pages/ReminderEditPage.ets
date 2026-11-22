@@ -1138,7 +1138,7 @@ export struct ReminderEditPage {
             this.SceneCreator()
           }
 
-          Text('地点提醒需要位置权限，且需要 ContextCue 保持运行；应用被彻底关闭后，进入地点不会弹出提醒。')
+          Text('地点提醒需要位置权限；到达所选地点时由系统提醒。')
             .fontSize(9)
             .fontColor(Theme.sub(this.uiMode))
             .opacity(0.8)

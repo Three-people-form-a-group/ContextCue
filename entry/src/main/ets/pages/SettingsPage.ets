@@ -3,7 +3,6 @@ import { UiMode } from '../common/UiMode';
 import { Theme } from '../common/Theme';
 import { TopBar } from '../components/TopBar';
 import { getAppServices } from '../app/AppServiceRegistry';
-import { AppRuntimeMode } from '../app/AppServices';
 import { notificationManager } from '@kit.NotificationKit';
 import { common } from '@kit.AbilityKit';
 import { reminderAgentManager } from '@kit.BackgroundTasksKit';
@@ -573,7 +572,7 @@ export struct SettingsPage {
         })
         .alignItems(VerticalAlign.Center)
 
-        Text('地点提醒需要 ContextCue 保持运行；应用被彻底关闭后，进入地点不会弹出提醒。')
+        Text('到达保存过的地点时由系统提醒；地点与界面设置会保存在本机。')
           .fontSize(10)
           .fontColor(Theme.sub(this.uiMode))
           .maxLines(3)
@@ -598,7 +597,7 @@ export struct SettingsPage {
               .fontColor($r('app.color.text_primary'))
             Text(this.aiConfigured
               ? '已配置真实模型，重启应用后生效'
-              : '未配置：使用示例数据，可在编辑台体验解析三态')
+              : '未配置：解析使用内置示例，也可以手动填写')
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
               .fontColor(Theme.sub(this.uiMode))
               .maxLines(2)
@@ -635,27 +634,19 @@ export struct SettingsPage {
       Column() {
         SettingValueRow({
           label: '版本',
-          desc: '已接入公共 ReminderService（开发组合）',
+          desc: '',
           value: '0.1.0'
         })
         SettingValueRow({
-          label: '运行模式',
-          desc: '提醒只保存在本次进程，重启会丢失；暂无自动触发与系统通知',
-          value: this.runtimeModeLabel()
+          label: '数据保存',
+          desc: '界面、地点与 AI 配置会保留；提醒和课表在重启应用后清空',
+          value: '本机'
         })
       }
       .width('100%')
       .padding({ left: 60 })
     }
     .width('100%')
-  }
-
-  private runtimeModeLabel(): string {
-    try {
-      return getAppServices().mode === AppRuntimeMode.DEVELOPMENT ? '开发联调' : '集成';
-    } catch (err) {
-      return '未初始化';
-    }
   }
 
   @Builder
@@ -667,7 +658,7 @@ export struct SettingsPage {
         .backgroundColor($r('app.color.text_primary'))
         .margin({ bottom: StyleConstants.SPACE_MD })
 
-      Text('占位页面 · 暂无持久化设置')
+      Text('界面与地点设置保存在本机')
         .fontSize(StyleConstants.FONT_SECTION_INDEX)
         .fontColor($r('app.color.text_secondary'))
         .opacity(0.8)

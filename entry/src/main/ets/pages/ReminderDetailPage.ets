@@ -569,7 +569,7 @@ export struct ReminderDetailPage {
           this.confirmDelete();
         })
 
-      Text('修改会保存在本次演示的临时数据中')
+      Text('修改会保存到这条提醒')
         .fontSize(StyleConstants.FONT_CAPTION)
         .fontColor($r('app.color.detail_note'))
         .width('100%')

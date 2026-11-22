@@ -121,6 +121,8 @@ export struct SettingsPage {
   /** 定位权限/开关状态与已保存的场景数 */
   @State locationState: SceneLocationState = SceneLocationState.PERMISSION_DENIED;
   @State sceneCount: number = 0;
+  /** 同时激活的地点/时间+地点提醒数量，用于围栏上限提示 */
+  @State activeLocationCount: number = 0;
 
   aboutToAppear(): void {
     this.notificationEnabled = notificationManager.isNotificationEnabledSync();
@@ -146,6 +148,18 @@ export struct SettingsPage {
     try {
       this.locationState = await service.state();
       this.sceneCount = (await service.list()).length;
+      const all = await getAppServices().reminderService.findAll();
+      if (all.success && all.data !== undefined) {
+        let active: number = 0;
+        for (let i = 0; i < all.data.length; i++) {
+          const reminder = all.data[i];
+          if (reminder.status === ReminderStatus.ACTIVE &&
+            (reminder.triggerType === TriggerType.LOCATION || reminder.triggerType === TriggerType.BOTH)) {
+            active++;
+          }
+        }
+        this.activeLocationCount = active;
+      }
     } catch (_) {
     }
   }
@@ -551,7 +565,8 @@ export struct SettingsPage {
               .fontColor($r('app.color.text_primary'))
             Text(this.sceneCount === 0
               ? '还没有保存地点，可在编辑台用当前位置新增'
-              : `已保存 ${this.sceneCount} 个地点`)
+              : `已保存 ${this.sceneCount} 个地点` +
+                (this.activeLocationCount > 0 ? `，同时激活 ${this.activeLocationCount} 条` : ''))
               .fontSize(StyleConstants.FONT_SECTION_INDEX)
               .fontColor(Theme.sub(this.uiMode))
               .maxLines(2)
@@ -571,6 +586,16 @@ export struct SettingsPage {
           bottom: StyleConstants.SPACE_MD
         })
         .alignItems(VerticalAlign.Center)
+
+        if (this.activeLocationCount >= 90) {
+          Text('同时激活的地点提醒接近系统围栏上限（约 100 条），建议暂停不用的地点提醒。')
+            .fontSize(10)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Theme.alert(this.uiMode))
+            .maxLines(3)
+            .width('100%')
+            .padding({ bottom: StyleConstants.SPACE_XS })
+        }
 
         Text('到达保存过的地点时由系统提醒；地点与界面设置会保存在本机。')
           .fontSize(10)
@@ -639,7 +664,7 @@ export struct SettingsPage {
         })
         SettingValueRow({
           label: '数据保存',
-          desc: '界面、地点与 AI 配置会保留；提醒和课表在重启应用后清空',
+          desc: '提醒、界面、地点与 AI 配置会保留；课表在重启应用后清空',
           value: '本机'
         })
       }

@@ -6,6 +6,7 @@ import { parseAIResponse } from './parser/AIResponseParser';
 import { validateAIParsedReminder } from './validator/AIParseValidator';
 import { validateCreateReminderInput } from '../model/ReminderModelRules';
 import { TriggerType } from '../model/ReminderEnums';
+import { CreateReminderInput } from '../model/CreateReminderInput';
 import { SceneCandidate, SceneResolveStatus, SceneResolver } from '../reminder/contract/SceneResolver';
 
 function issue(code: AIParseIssueCode, field: string | undefined, retryable: boolean): AIParseIssue {
@@ -89,7 +90,25 @@ export class DefaultAIService implements AIService {
         const resolution = await this.sceneResolver.resolveByName(parsed.value.sceneName as string);
         if (resolution.status !== SceneResolveStatus.RESOLVED || resolution.match === undefined ||
           resolution.match.id.trim().length === 0) {
-          return outcome(AIParseStatus.NEEDS_CONFIRMATION, [issue(AIParseIssueCode.UNRESOLVED_LOCATION, 'sceneName', false)]);
+          // 地点没解析出来也回一个“部分 draft”：内容、提醒方式和时间仍可预填，
+          // 编辑台再用地点名引导用户选择或新建场景。
+          const partial: CreateReminderInput = mapAIParsedReminder(parsed.value, undefined);
+          if (parsed.value.sceneName !== null) {
+            partial.sceneName = parsed.value.sceneName;
+          }
+          const message: string = resolution.status === SceneResolveStatus.AMBIGUOUS
+            ? '有多个同名地点，请在下面选择具体地点'
+            : '这个地点还没有保存，可以在编辑台用当前位置新增';
+          return {
+            status: AIParseStatus.NEEDS_CONFIRMATION,
+            draft: partial,
+            issues: [{
+              code: AIParseIssueCode.UNRESOLVED_LOCATION,
+              field: 'sceneName',
+              message: message,
+              retryable: false
+            }]
+          };
         }
         scene = resolution.match;
       } catch (_) {

@@ -37,18 +37,30 @@ export class LocationSceneService {
     return this.catalog.findAll();
   }
 
-  /** 只改名称和半径，坐标保持场景原值。 */
+  /**
+   * 只改名称和半径，坐标保持场景原值。
+   * 被提醒引用时：改名允许（围栏不依赖名称），改半径仍需先处理相关提醒。
+   */
   async updateScene(id: string, name: string, radius: number): Promise<Scene> {
     const scene = await this.catalog.findById(id);
     if (scene === undefined) {
       throw new Error('SCENE_NOT_FOUND');
     }
-    return this.catalog.update(id, {
-      name: name,
-      latitude: scene.latitude,
-      longitude: scene.longitude,
-      radius: radius
-    });
+    const radiusChanged: boolean = scene.radius !== radius;
+    try {
+      return await this.catalog.update(id, {
+        name: name,
+        latitude: scene.latitude,
+        longitude: scene.longitude,
+        radius: radius
+      });
+    } catch (error) {
+      const code: string = error instanceof Error ? error.message : String(error);
+      if (code === 'SCENE_IN_USE' && !radiusChanged) {
+        return await this.catalog.rename(id, name);
+      }
+      throw error as Error;
+    }
   }
 
   /** 被提醒引用时 SceneCatalog 会抛 SCENE_IN_USE。 */

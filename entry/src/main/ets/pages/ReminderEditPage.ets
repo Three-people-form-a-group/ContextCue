@@ -8,6 +8,7 @@ import { RefreshSignal } from '../common/RefreshSignal';
 import { Reminder } from '../model/Reminder';
 import { CreateReminderInput } from '../model/CreateReminderInput';
 import { Scene } from '../model/Scene';
+import { ReminderStatus } from '../model/ReminderEnums';
 import { LocationSceneService, SceneLocationState } from '../location/scene/LocationSceneService';
 import { SCENE_MAX_RADIUS_METERS, SCENE_MIN_RADIUS_METERS } from '../location/scene/SceneCatalog';
 import { DraftStore, ReminderDraft } from '../common/DraftStore';
@@ -45,6 +46,8 @@ export struct ReminderEditPage {
   @State selectedSceneId: string = '';
   /** 已保存的场景列表与「用当前位置新增」面板 */
   @State scenes: Scene[] = [];
+  /** 目录成功加载过才敢判断“选中的地点已被删除” */
+  private scenesLoaded: boolean = false;
   @State showSceneCreator: boolean = false;
   /** 非空表示正在修改这个场景；空串表示新增 */
   @State sceneEditingId: string = '';
@@ -120,6 +123,7 @@ export struct ReminderEditPage {
     }
     try {
       this.scenes = await service.list();
+      this.scenesLoaded = true;
     } catch (_) {
       this.scenes = [];
     }
@@ -137,6 +141,20 @@ export struct ReminderEditPage {
         break;
       }
     }
+    this.reconcileSelectedScene();
+  }
+
+  /** 选中的场景已被删除时保留名称提示，但不要让它看起来还是“已选” */
+  private reconcileSelectedScene(): void {
+    if (!this.scenesLoaded || this.selectedSceneId === '') {
+      return;
+    }
+    for (let i = 0; i < this.scenes.length; i++) {
+      if (this.scenes[i].id === this.selectedSceneId) {
+        return;
+      }
+    }
+    this.selectedSceneId = '';
   }
 
   private sceneService(): LocationSceneService | undefined {
@@ -167,6 +185,7 @@ export struct ReminderEditPage {
     this.typeSel = r.triggerType;
     this.selectedSceneId = r.sceneId === undefined ? '' : r.sceneId;
     this.sceneInput = r.sceneName === undefined ? '' : r.sceneName;
+    this.reconcileSelectedScene();
     this.initialTitle = this.titleInput;
     this.initialTimeMs = this.selectedTimeMs;
   }
@@ -1123,6 +1142,8 @@ export struct ReminderEditPage {
     this.sceneError = '';
     try {
       const scene: Scene = await service.updateScene(this.sceneEditingId, name, radius);
+      // 改名后同步仍在使用该地点的提醒，避免详情页显示旧名称
+      const synced: boolean = await this.cascadeSceneName(scene.id, scene.name);
       try {
         this.scenes = await service.list();
       } catch (_) {
@@ -1132,11 +1153,53 @@ export struct ReminderEditPage {
       }
       this.closeSceneEditor();
       this.saveError = '';
-      this.getUIContext().getPromptAction().showToast({ message: '已修改地点' });
+      this.getUIContext().getPromptAction().showToast({
+        message: synced ? '已修改地点' : '地点已改名，部分提醒未能同步'
+      });
     } catch (error) {
-      this.sceneError = this.sceneMutationErrorMessage(error);
+      const code: string = error instanceof Error ? error.message : String(error);
+      this.sceneError = code === 'SCENE_IN_USE'
+        ? '这个地点还被提醒使用：可以改名，改范围需要先处理相关提醒'
+        : this.sceneMutationErrorMessage(error);
     } finally {
       this.sceneBusy = false;
+    }
+  }
+
+  /** 场景改名后，把 ACTIVE/DISABLED 提醒里的 sceneName 一起更新；完成的提醒保留旧名 */
+  private async cascadeSceneName(sceneId: string, newName: string): Promise<boolean> {
+    try {
+      const services = getAppServices();
+      const all = await services.reminderService.findAll();
+      if (!all.success || all.data === undefined) {
+        return false;
+      }
+      let synced: boolean = true;
+      for (let i = 0; i < all.data.length; i++) {
+        const reminder: Reminder = all.data[i];
+        if (reminder.sceneId !== sceneId || reminder.sceneName === newName) {
+          continue;
+        }
+        if (reminder.status !== ReminderStatus.ACTIVE && reminder.status !== ReminderStatus.DISABLED) {
+          continue;
+        }
+        const input: CreateReminderInput = {
+          content: reminder.content,
+          triggerType: reminder.triggerType,
+          triggerTime: reminder.triggerTime,
+          sceneId: sceneId,
+          sceneName: newName,
+          locationTriggerMode: reminder.locationTriggerMode,
+          source: reminder.source
+        };
+        const result = await services.reminderService.update(reminder.id, input);
+        if (!result.success) {
+          synced = false;
+        }
+      }
+      return synced;
+    } catch (_) {
+      return false;
     }
   }
 

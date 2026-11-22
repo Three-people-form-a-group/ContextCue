@@ -5,9 +5,11 @@ import { FakeAIModelProvider } from '../ai/provider/FakeAIModelProvider';
 import { OhosAIChatClient } from '../ai/provider/OhosAIChatClient';
 import { ZhipuAIModelProvider } from '../ai/provider/ZhipuAIModelProvider';
 import { buildDevFixtures } from './DevelopmentServices';
-import { InMemoryReminderRepository } from '../repository/InMemoryReminderRepository';
+import { createFileReminderRepository } from '../repository/FileReminderRepository';
 import { InMemoryTimetableRepository } from '../timetable/repository/InMemoryTimetableRepository';
-import { ReminderStatus } from '../model/ReminderEnums';
+import { ReminderStatus, TriggerType } from '../model/ReminderEnums';
+import { ReminderService } from '../service/ReminderService';
+import { CreateReminderInput } from '../model/CreateReminderInput';
 import { SceneCatalog } from '../location/scene/SceneCatalog';
 import { LocationSceneService } from '../location/scene/LocationSceneService';
 import { createPreferencesSceneStorage } from '../location/repository/PreferencesSceneStorage';
@@ -16,7 +18,6 @@ import { HarmonyPermissionGateway, LocationPermissionManager } from '../location
 import { LocationReminderAdapter } from '../location/trigger/LocationReminderAdapter';
 import { FENCE_EXTENSION_ABILITY_NAME } from '../location/platform/LocationPlatform';
 import { createFileFenceRegistry } from '../location/repository/FenceRegistryStore';
-import { ReminderService } from '../service/ReminderService';
 import { createSystemNotificationPort, createSystemTimePort } from '../reminder/adapter/SystemAdapters';
 import { ReminderAgentTimePort } from '../reminder/adapter/ReminderAgentTimePort';
 import { NotifyPref } from '../common/NotifyPref';
@@ -26,9 +27,9 @@ import { AppServices, AppRuntimeMode, createAppServices } from './AppServices';
 import { getAppServices } from './AppServiceRegistry';
 
 /**
- * 正式组装（INTEGRATED）：罗鸿程的系统时间/通知端口与对账 + 兰铮的定位适配器、
- * 场景目录、LocationSceneService 与 V2 围栏扩展注册表。由组长在整合阶段切换；
- * 仓储仍为内存实现。凭证经本地配置注入（见《真实AI接入准备》），缺失时 AI 仍为 Fake。
+ * 正式组装（INTEGRATED）：罗鸿程的系统时间/通知端口、文件持久化仓储、场景规则与
+ * LocationSceneService + 兰铮的定位适配器、场景目录与 V2 围栏扩展注册表。
+ * 凭证经本地配置注入（见《真实AI接入准备》），缺失时 AI 仍为 Fake（开发样例可联调）。
  */
 export function createIntegratedServices(config: AIProviderConfig | undefined,
   context: common.UIAbilityContext): AppServices {
@@ -42,7 +43,14 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
       if (!all.success || all.data === undefined) { return false; }
       let found: boolean = false;
       for (let i = 0; i < all.data.length; i++) {
-        if (all.data[i].sceneId === sceneId) { found = true; break; }
+        const reminder = all.data[i];
+        // 已完成/已触发的提醒不再占用场景：场景可以改名或删除，
+        // 取消完成时由用户重新选择地点（编辑页会先显示原来的名称）。
+        if (reminder.sceneId === sceneId &&
+          (reminder.status === ReminderStatus.ACTIVE || reminder.status === ReminderStatus.DISABLED)) {
+          found = true;
+          break;
+        }
       }
       return found;
     });
@@ -64,7 +72,8 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   const timePorts: ReminderAgentTimePort[] = [];
   const services = createAppServices({
     mode: AppRuntimeMode.INTEGRATED,
-    repository: new InMemoryReminderRepository(),
+    // 沙箱文件仓储：主进程与围栏扩展共用同一路径，进程重启后提醒仍在
+    repository: createFileReminderRepository(context.filesDir),
     timetableRepository: new InMemoryTimetableRepository(),
     createTimePort: (sink): TimeTriggerPort => {
       const port = createSystemTimePort(sink);

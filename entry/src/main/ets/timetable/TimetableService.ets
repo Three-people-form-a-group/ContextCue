@@ -4,9 +4,11 @@ import { Reminder } from '../model/Reminder';
 import { ReminderSource, ReminderStatus, TriggerType } from '../model/ReminderEnums';
 import { ReminderService } from '../service/ReminderService';
 import { computeCurrentWeek, formatCalendarDate, localDayCanonical, mondayOfWeek,
-  occurrenceEpochMs, parseCalendarDate, validateTimetableDraft } from './parse/TimetableDataParser';
+  occurrenceEpochMs, parseCalendarDate, validateTimetableDraft, validateTimetableSchedule
+} from './parse/TimetableDataParser';
 import { OccurrenceRecord, StoredCourse, StoredTimetable, TimetableDeleteSummary,
-  TimetableDraft, TimetableReminderSummary, TimetableSaveResult, WeekInfo } from './model/TimetableTypes';
+  TimetableDraft, TimetableReminderSummary, TimetableSaveResult, TimetableSchedule,
+  WeekInfo } from './model/TimetableTypes';
 import { TimetableRepository } from './repository/TimetableRepository';
 
 function serviceError(code: string, message: string, retryable: boolean): OperationError {
@@ -83,6 +85,21 @@ export class TimetableService {
       return { success: false, error: serviceError('TIMETABLE_INVALID_DRAFT',
         `${first.message}${first.field === undefined ? '' : ': ' + first.field}`, false) };
     }
+    if (draft.schedule !== undefined && draft.schedule !== null) {
+      const scheduleIssues = validateTimetableSchedule(draft.schedule);
+      if (scheduleIssues.length > 0) {
+        const first = scheduleIssues[0];
+        return { success: false, error: serviceError('TIMETABLE_INVALID_DRAFT',
+          `${first.message}${first.field === undefined ? '' : ': ' + first.field}`, false) };
+      }
+    }
+    // 作息三态：undefined=沿用已存、null=清空、对象=替换
+    let previous: StoredTimetable | undefined = undefined;
+    try {
+      previous = await this.repository.find();
+    } catch (_) {
+      previous = undefined;
+    }
     try {
       await this.cascadeExisting();
     } catch (_) {
@@ -109,6 +126,15 @@ export class TimetableService {
       anchorWeek: draft.anchorWeek,
       courses: courses
     };
+    let resolvedSchedule: TimetableSchedule | null | undefined;
+    if (draft.schedule === undefined) {
+      resolvedSchedule = previous === undefined ? undefined : previous.schedule;
+    } else {
+      resolvedSchedule = draft.schedule;
+    }
+    if (resolvedSchedule !== undefined) {
+      stored.schedule = resolvedSchedule;
+    }
     try {
       await this.repository.save(stored, []);
     } catch (_) {

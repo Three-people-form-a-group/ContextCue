@@ -2,12 +2,15 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { initializeAppServices } from '../app/AppBootstrap';
+import { readLocalAIProviderConfig } from '../ai/provider/LocalAIConfigReader';
 
 const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
-    const services = initializeAppServices();
+    // 本地配置（沙箱 files/ai.config.local.json）存在则启用真实 Provider，否则 Fake。
+    const aiConfig = readLocalAIProviderConfig(this.context.filesDir);
+    const services = initializeAppServices(aiConfig, this.context);
     hilog.info(DOMAIN, 'ContextCue', 'App services initialized, mode=%{public}s', services.mode);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }

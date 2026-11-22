@@ -8,6 +8,7 @@ import { AIParseStatus } from '../main/ets/ai/model/AIParseResult';
 import { Reminder } from '../main/ets/model/Reminder';
 import { ReminderSource, ReminderStatus, TriggerType } from '../main/ets/model/ReminderEnums';
 import { InMemoryReminderRepository } from '../main/ets/repository/InMemoryReminderRepository';
+import { InMemoryTimetableRepository } from '../main/ets/timetable/repository/InMemoryTimetableRepository';
 import { TimeTriggerPort } from '../main/ets/reminder/contract/TimeTriggerPort';
 import { LocationTriggerPort } from '../main/ets/reminder/contract/LocationTriggerPort';
 import { ReminderNotificationPort } from '../main/ets/reminder/contract/ReminderNotificationPort';
@@ -54,6 +55,7 @@ class CompositionFixture {
     this.services = createAppServices({
       mode: AppRuntimeMode.INTEGRATED,
       repository: new InMemoryReminderRepository(),
+      timetableRepository: new InMemoryTimetableRepository(),
       createTimePort: (sink: TriggerEventSink): TimeTriggerPort => {
         this.timeSink = sink;
         return new TestTime();

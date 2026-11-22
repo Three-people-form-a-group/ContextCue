@@ -5,6 +5,12 @@ build/
 .hvigor/
 local.properties
 
+# DevEco App Analyzer artifacts
+.appanalyzer/
+
+# Local AI provider credentials (NEVER commit; see docs/team/真实AI接入准备)
+/ai.config.local.json
+
 # IDE files
 .idea/
 
@@ -19,3 +25,6 @@ oh_modules/
 
 # Node modules
 node_modules/
+
+# TypeScript build cache
+.cache/

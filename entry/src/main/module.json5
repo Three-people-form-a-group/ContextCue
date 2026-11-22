@@ -12,8 +12,18 @@
     "pages": "$profile:main_pages",
     "requestPermissions": [
       {
+        "name": "ohos.permission.PUBLISH_AGENT_REMINDER",
+        "reason": "$string:permission_reason_reminder",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
         "name": "ohos.permission.APPROXIMATELY_LOCATION",
-        "reason": "$string:location_permission_reason",
+        "reason": "$string:permission_reason_location",
         "usedScene": {
           "abilities": [
             "EntryAbility"
@@ -23,7 +33,7 @@
       },
       {
         "name": "ohos.permission.LOCATION",
-        "reason": "$string:location_permission_reason",
+        "reason": "$string:permission_reason_location",
         "usedScene": {
           "abilities": [
             "EntryAbility"

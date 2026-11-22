@@ -20,6 +20,16 @@ class HarmonyScenePreferences implements ScenePreferences {
   async flush(): Promise<void> { await this.preferences.flush(); }
 }
 
+/** 组装根用：从 UIAbilityContext 打开偏好存储并包装为 TextStorage（类实例，规避字面量方法限制）。 */
+export function createPreferencesSceneStorage(context: common.UIAbilityContext,
+  storeName: string = 'scene_store'): PreferencesSceneStorage {
+  const open = async (): Promise<ScenePreferences> => {
+    const options: preferences.Options = { name: storeName };
+    return new HarmonyScenePreferences(await preferences.getPreferences(context, options));
+  };
+  return new PreferencesSceneStorage(open);
+}
+
 /** A failed flush makes subsequent reads fail closed until process restart/recovery. */
 export class PreferencesSceneStorage implements TextStorage {
   private open: () => Promise<ScenePreferences>;

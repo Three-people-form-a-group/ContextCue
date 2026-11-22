@@ -62,8 +62,11 @@ function withStatus(reminder: Reminder, status: ReminderStatus, at?: number): Re
     triggerTime: reminder.triggerTime, sceneId: reminder.sceneId, sceneName: reminder.sceneName,
     locationTriggerMode: reminder.locationTriggerMode, status: status, source: reminder.source,
     createdAt: reminder.createdAt,
-    triggeredAt: status === ReminderStatus.TRIGGERED ? at : reminder.triggeredAt,
-    completedAt: status === ReminderStatus.COMPLETED ? at : reminder.completedAt
+    // 回到 ACTIVE 表示重新待办：清掉上一次的触发/完成时间；
+    // 离开 COMPLETED（撤销完成）时 completedAt 也必须清掉，否则会残留。
+    triggeredAt: status === ReminderStatus.TRIGGERED ? at
+      : (status === ReminderStatus.ACTIVE ? undefined : reminder.triggeredAt),
+    completedAt: status === ReminderStatus.COMPLETED ? at : undefined
   };
 }
 

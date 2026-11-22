@@ -4,6 +4,7 @@ import { AIProviderConfig } from '../ai/provider/AIProviderConfig';
 import { FakeAIModelProvider } from '../ai/provider/FakeAIModelProvider';
 import { OhosAIChatClient } from '../ai/provider/OhosAIChatClient';
 import { ZhipuAIModelProvider } from '../ai/provider/ZhipuAIModelProvider';
+import { buildDevFixtures } from './DevelopmentServices';
 import { InMemoryReminderRepository } from '../repository/InMemoryReminderRepository';
 import { InMemoryTimetableRepository } from '../timetable/repository/InMemoryTimetableRepository';
 import { ReminderStatus } from '../model/ReminderEnums';

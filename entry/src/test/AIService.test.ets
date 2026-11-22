@@ -55,7 +55,10 @@ export default function aiServiceTest() {
       resolver.result = { status: SceneResolveStatus.AMBIGUOUS, candidates: [{ id: 'a', name: '实验室' }, { id: 'b', name: '实验室' }] };
       const outcome = await new DefaultAIService(new FakeAIModelProvider(fixtures), resolver).parseReminder('input', context);
       expect(outcome.status).assertEqual(AIParseStatus.NEEDS_CONFIRMATION);
-      expect(outcome.draft).assertUndefined();
+      // 地点有歧义时仍回填部分 draft，编辑台据此预填内容和地点名
+      expect(outcome.draft?.triggerType).assertEqual(TriggerType.LOCATION);
+      expect(outcome.draft?.sceneName).assertEqual('实验室');
+      expect(outcome.draft?.sceneId).assertUndefined();
       expect(outcome.issues[0].code).assertEqual(AIParseIssueCode.UNRESOLVED_LOCATION);
     });
     it('fails retryably on network failure without a draft', 0, async () => {

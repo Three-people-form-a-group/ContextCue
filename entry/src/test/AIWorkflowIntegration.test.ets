@@ -176,7 +176,9 @@ export default function aiWorkflowIntegrationTest() {
       unresolved.location.resolveStatus = SceneResolveStatus.NOT_FOUND;
       const confirmation = await unresolved.parse();
       expect(confirmation.status).assertEqual(AIParseStatus.NEEDS_CONFIRMATION);
-      expect(confirmation.draft).assertUndefined();
+      // 未解析出地点时只回填部分 draft，不能直接持久化
+      expect(confirmation.draft?.sceneName).assertEqual('实验室');
+      expect(confirmation.draft?.sceneId).assertUndefined();
       expect((await unresolved.repository.findAll()).length).assertEqual(0);
       const malformed = new Workflow('not json');
       expect((await malformed.parse()).status).assertEqual(AIParseStatus.FAILED);

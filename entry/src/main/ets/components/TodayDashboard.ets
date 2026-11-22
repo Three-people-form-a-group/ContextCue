@@ -99,6 +99,8 @@ export struct TodayDashboard {
   @State struckId: string = '';
   /** 长按后紧跟着的点击要忽略，否则会跳进详情页 */
   private longPressAt: number = 0;
+  /** 用户可以选择隐藏今日已完成归档 */
+  @State hideDone: boolean = false;
 
   /**
    * 今日只显示「今天」的提醒 + 没有时间的纯地点提醒。
@@ -141,8 +143,20 @@ export struct TodayDashboard {
     return timed.concat(untimed);
   }
 
+  /** 今日完成归档：只看今天完成的（completedAt，缺失时退回 triggerTime） */
   private doneItems(): Reminder[] {
-    return this.items.filter((item: Reminder) => isCompleted(item));
+    const start: number = this.todayStartMs;
+    const end: number = start + 24 * 3600 * 1000;
+    return this.items.filter((item: Reminder) => {
+      if (!isCompleted(item)) {
+        return false;
+      }
+      const at: number | undefined = item.completedAt !== undefined ? item.completedAt : item.triggerTime;
+      if (at === undefined || start <= 0) {
+        return at !== undefined;
+      }
+      return at >= start && at < end;
+    });
   }
 
   aboutToAppear(): void {
@@ -923,6 +937,17 @@ export struct TodayDashboard {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.archive_rule'))
           Blank()
+          Text(this.hideDone ? '显示' : '隐藏')
+            .fontSize(10)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_secondary'))
+            .decoration({ type: TextDecorationType.Underline })
+            .height(28)
+            .padding({ left: 6, right: 6 })
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              this.hideDone = !this.hideDone;
+            })
           Column()
             .width(StyleConstants.SPACE_XXL)
             .height(StyleConstants.HAIRLINE_HEIGHT)
@@ -931,23 +956,25 @@ export struct TodayDashboard {
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        ForEach(this.doneItems(), (item: Reminder) => {
-          Row() {
-            ReminderCard({
-              data: item,
-              role: SlipRole.ARCHIVE,
-              onCardClick: () => {
-                this.goDetail(item);
-              }
-            })
-            .layoutWeight(1)
-            this.DoneCircle(item)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
-        }, (item: Reminder) => `${this.dataVersion}-${this.paperVersion}-${reminderRenderKey(item)}` +
-            `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
-            `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
+        if (!this.hideDone) {
+          ForEach(this.doneItems(), (item: Reminder) => {
+            Row() {
+              ReminderCard({
+                data: item,
+                role: SlipRole.ARCHIVE,
+                onCardClick: () => {
+                  this.goDetail(item);
+                }
+              })
+              .layoutWeight(1)
+              this.DoneCircle(item)
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+          }, (item: Reminder) => `${this.dataVersion}-${this.paperVersion}-${reminderRenderKey(item)}` +
+              `-${PaperStore.paperOf(item.id)}-${PaperStore.isTextHidden(item.id) ? 'h' : 's'}` +
+              `-${this.doodleVersion}-${DoodleStore.get(item.id).length}-${this.layoutVersion}`)
+        }
       }
       .width('100%')
       .margin({ top: StyleConstants.SPACE_XL })

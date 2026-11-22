@@ -123,6 +123,28 @@ export class SceneCatalog implements SceneResolver {
     }
   }
 
+  /**
+   * 只改名称，坐标和半径保持原值。被提醒引用时也允许：
+   * 名称只是展示和 AI 匹配用，围栏依赖的是 sceneId 与坐标。
+   */
+  async rename(id: string, name: string): Promise<Scene> {
+    const trimmed: string = name.trim();
+    if (trimmed.length === 0 || trimmed.length > 100) {
+      throw new Error('SCENE_INVALID_NAME');
+    }
+    return this.exclusive(async (): Promise<Scene> => {
+      const scenes = await this.load();
+      const index = scenes.findIndex((scene: Scene) => scene.id === id);
+      if (index < 0) { throw new Error('SCENE_NOT_FOUND'); }
+      const current: Scene = scenes[index];
+      const next: Scene = { id: id, name: trimmed, latitude: current.latitude,
+        longitude: current.longitude, radius: current.radius, createdAt: current.createdAt };
+      scenes[index] = next;
+      await this.save(scenes);
+      return copyScene(next);
+    });
+  }
+
   async update(id: string, input: SceneInput): Promise<Scene> {
     const draft: SceneInput = { name: input.name, latitude: input.latitude, longitude: input.longitude, radius: input.radius };
     validateInput(draft);

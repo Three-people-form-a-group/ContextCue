@@ -4,7 +4,7 @@ import { LocationTriggerPort } from '../../reminder/contract/LocationTriggerPort
 import { TriggerEventSink } from '../../reminder/contract/TriggerEventSink';
 import { TriggerCondition, TriggerConditionEvent } from '../../reminder/contract/TriggerConditionEvent';
 import { distanceMeters, isWithinRadius } from '../geometry/LocationGeometry';
-import { LocationPlatform } from '../platform/LocationPlatform';
+import { FenceDelivery, FenceMapping, FenceRegistry, LocationPlatform } from '../platform/LocationPlatform';
 import { SceneCatalog } from '../scene/SceneCatalog';
 
 class Registration {
@@ -40,9 +40,36 @@ function snapshot(reminder: Reminder): Reminder {
     createdAt: reminder.createdAt, triggeredAt: reminder.triggeredAt, completedAt: reminder.completedAt };
 }
 
+/** A reminder that should own a fence: active, location driven, and enter oriented. */
+export function isLocationRegistrationCandidate(reminder: Reminder): boolean {
+  return reminder.id.trim().length > 0 && reminder.sceneId !== undefined &&
+    reminder.sceneId.trim().length > 0 && reminder.status === ReminderStatus.ACTIVE &&
+    (reminder.triggerType === TriggerType.LOCATION || reminder.triggerType === TriggerType.BOTH) &&
+    (reminder.locationTriggerMode === undefined || reminder.locationTriggerMode === LocationTriggerMode.ENTER);
+}
+
+function errorCode(error: Object | undefined): string {
+  if (error instanceof Error) { return error.message; }
+  return '';
+}
+
+/** Registry failures keep their own code so the UI can tell a storage problem from a fence problem. */
+function registrationFailure(error: Object | undefined): Error {
+  const code = errorCode(error);
+  if (code === 'FENCE_REGISTRY_WRITE_FAILED' || code === 'FENCE_REGISTRY_REQUIRES_RECOVERY' ||
+    code === 'FENCE_REGISTRY_CORRUPT') {
+    return new Error(code);
+  }
+  return new Error('LOCATION_FENCE_REGISTRATION_FAILED');
+}
+
 /**
  * No resources are acquired at construction. start() is an integration lifecycle operation.
  * register() also starts lazily, because the user can grant location permission after app launch.
+ *
+ * Every fence this adapter creates is paired with a durable mapping in the FenceRegistry, so a
+ * later process (or the fence extension) can answer "which reminder owns fence N" and so removal
+ * still works after a restart, when the in-memory registrations are empty.
  */
 export class LocationReminderAdapter implements LocationTriggerPort {
   private catalog: SceneCatalog;
@@ -51,19 +78,24 @@ export class LocationReminderAdapter implements LocationTriggerPort {
   private now: () => number;
   private onError: (code: string) => void;
   private isReminderReady: (expected: Reminder) => Promise<boolean>;
+  private registry: FenceRegistry;
+  private delivery?: FenceDelivery;
   private started: boolean = false;
   private gate: Promise<void> = Promise.resolve();
   private registrations: Map<string, Registration> = new Map<string, Registration>();
 
   constructor(catalog: SceneCatalog, platform: LocationPlatform, sink: TriggerEventSink,
     now: () => number, onError: (code: string) => void,
-    isReminderReady: (expected: Reminder) => Promise<boolean>) {
+    isReminderReady: (expected: Reminder) => Promise<boolean>, registry: FenceRegistry,
+    delivery?: FenceDelivery) {
     this.catalog = catalog;
     this.platform = platform;
     this.sink = sink;
     this.now = now;
     this.onError = onError;
     this.isReminderReady = isReminderReady;
+    this.registry = registry;
+    this.delivery = delivery;
   }
 
   private async exclusive(action: () => Promise<void>): Promise<void> {
@@ -79,12 +111,23 @@ export class LocationReminderAdapter implements LocationTriggerPort {
     this.started = true;
   }
 
+  private async ensureReady(): Promise<void> {
+    // Permission is granted at runtime, so the composition root cannot reliably pre-start us.
+    // Lazily start inside the gate: calling start() here would await our own gate forever.
+    if (!this.started) { await this.ensureStarted(); }
+    else { await this.platform.checkReady(); }
+  }
+
   async start(): Promise<void> {
     await this.exclusive(async (): Promise<void> => {
       await this.ensureStarted();
     });
   }
 
+  /**
+   * Stops in-process delivery only. Durable mappings and system fences survive on purpose: the
+   * fence extension still needs them after this process is gone.
+   */
   async stop(): Promise<void> {
     await this.exclusive(async (): Promise<void> => {
       this.started = false;
@@ -99,61 +142,164 @@ export class LocationReminderAdapter implements LocationTriggerPort {
 
   async register(reminder: Reminder): Promise<void> {
     // Snapshot the shared model before the first await.
-    const id = reminder.id;
-    const sceneId = reminder.sceneId;
     const expected = snapshot(reminder);
-    if (id.trim().length === 0 || sceneId === undefined || sceneId.trim().length === 0 ||
-      (reminder.triggerType !== TriggerType.LOCATION && reminder.triggerType !== TriggerType.BOTH) ||
-      reminder.status !== ReminderStatus.ACTIVE ||
-      (reminder.locationTriggerMode !== undefined && reminder.locationTriggerMode !== LocationTriggerMode.ENTER)) {
+    if (!isLocationRegistrationCandidate(expected)) {
       throw new Error('LOCATION_INVALID_REGISTRATION');
     }
     await this.exclusive(async (): Promise<void> => {
-      // Permission is granted at runtime, so the composition root cannot reliably pre-start us.
-      // Lazily start inside the gate: calling start() here would await our own gate forever.
-      if (!this.started) { await this.ensureStarted(); }
-      else { await this.platform.checkReady(); }
-      const existing = this.registrations.get(id);
-      if (existing !== undefined) {
-        if (existing.sceneId !== sceneId) { throw new Error('LOCATION_UNREGISTER_BEFORE_REPLACE'); }
-        if (!matchesLocationRegistration(existing.expected, expected)) {
-          throw new Error('LOCATION_UNREGISTER_BEFORE_REPLACE');
-        }
+      await this.ensureReady();
+      await this.registerLocked(expected);
+    });
+  }
+
+  /** Caller holds the gate. */
+  private async registerLocked(expected: Reminder): Promise<void> {
+    const id = expected.id;
+    const sceneId = expected.sceneId as string;
+    const existing = this.registrations.get(id);
+    if (existing !== undefined) {
+      if (existing.sceneId !== sceneId) { throw new Error('LOCATION_UNREGISTER_BEFORE_REPLACE'); }
+      if (!matchesLocationRegistration(existing.expected, expected)) {
+        throw new Error('LOCATION_UNREGISTER_BEFORE_REPLACE');
+      }
+      const mapped = await this.registry.findByReminder(id);
+      if (mapped !== undefined || existing.fenceId === undefined) {
         existing.active = true;
         return;
       }
-      const scene = await this.catalog.acquire(sceneId, id);
-      const registration = new Registration(expected, sceneId);
-      this.registrations.set(id, registration);
-      try {
-        registration.fenceId = await this.platform.addFence(scene,
-          (): void => { this.enter(registration); },
-          (code: string): void => { this.onError(code); });
-        registration.active = true;
-        // A system callback may have arrived while addFence was in progress.
-        if (registration.pending !== undefined) { this.scheduleDelivery(registration); }
-      } catch (_) {
-        this.registrations.delete(id);
-        await this.catalog.release(sceneId, id);
-        throw new Error('LOCATION_FENCE_REGISTRATION_FAILED');
-      }
-    });
+      // The fence record is gone (for example the extension delivered and cleaned it up), so the
+      // registration cannot be trusted: drop it and recreate the fence below.
+      this.registrations.delete(id);
+      await this.catalog.release(existing.sceneId, id);
+    }
+    const scene = await this.catalog.acquire(sceneId, id);
+    const registration = new Registration(expected, sceneId);
+    this.registrations.set(id, registration);
+    try {
+      const fenceId = await this.platform.addFence(scene,
+        (): void => { this.enter(registration); },
+        (code: string): void => { this.onError(code); },
+        this.delivery);
+      registration.fenceId = fenceId;
+      // The mapping must exist before anyone can learn this fence id, otherwise the extension would
+      // meet a fence it cannot resolve and a restart would leak the fence.
+      await this.registry.save(fenceId, id);
+      registration.active = true;
+      // A system callback may have arrived while addFence was in progress.
+      if (registration.pending !== undefined) { this.scheduleDelivery(registration); }
+    } catch (error) {
+      await this.rollbackRegistration(registration, error);
+    }
+  }
+
+  private async rollbackRegistration(registration: Registration, error: Object): Promise<void> {
+    this.registrations.delete(registration.reminderId);
+    if (registration.fenceId !== undefined) {
+      try { await this.platform.removeFence(registration.fenceId); }
+      catch (_) { /* Startup reconciliation deletes an unclaimed fence. */ }
+    }
+    try { await this.catalog.release(registration.sceneId, registration.reminderId); }
+    catch (_) { /* The catalog release failure must not mask the registration failure. */ }
+    throw registrationFailure(error);
   }
 
   async unregister(reminderId: string): Promise<void> {
     await this.exclusive(async (): Promise<void> => { await this.remove(reminderId); });
   }
 
+  /**
+   * Caller holds the gate.
+   *
+   * Mapping first, fence second. The mapping is the only way to find the fence after a restart, so
+   * removing it last would leave an unremovable fence when the native removal fails. With this
+   * order a failed native removal leaves at most one unclaimed fence, which startup reconciliation
+   * deletes, and the failed call can be retried because the fence id is still in memory.
+   */
   private async remove(id: string): Promise<void> {
     const registration = this.registrations.get(id);
-    if (registration === undefined) { return; }
-    // Suppress callbacks as soon as removal begins, even if the native removal fails.
-    registration.active = false;
-    registration.pending = undefined;
-    if (registration.timer !== undefined) { clearTimeout(registration.timer); registration.timer = undefined; }
-    if (registration.fenceId !== undefined) { await this.platform.removeFence(registration.fenceId); }
-    this.registrations.delete(id);
-    await this.catalog.release(registration.sceneId, id);
+    if (registration !== undefined) {
+      // Suppress callbacks as soon as removal begins, even if the native removal fails.
+      registration.active = false;
+      registration.pending = undefined;
+      if (registration.timer !== undefined) { clearTimeout(registration.timer); registration.timer = undefined; }
+    }
+    const mapped: FenceMapping | undefined = await this.registry.findByReminder(id);
+    let fenceId = registration !== undefined ? registration.fenceId : undefined;
+    if (fenceId === undefined && mapped !== undefined) { fenceId = mapped.fenceId; }
+    if (registration === undefined && fenceId === undefined) { return; }
+    if (mapped !== undefined) { await this.registry.removeByReminder(id); }
+    if (fenceId !== undefined) {
+      try {
+        await this.platform.removeFence(fenceId);
+      } catch (error) {
+        // Restore the mapping so the fence stays reachable for the next attempt.
+        if (mapped !== undefined) {
+          try { await this.registry.save(fenceId, id); }
+          catch (_) { /* Nothing left to do: startup reconciliation owns an unclaimed fence. */ }
+        }
+        // ArkTS forbids rethrowing an arbitrary value, so normalize it first.
+        throw error instanceof Error ? error : new Error('LOCATION_FENCE_REMOVAL_FAILED');
+      }
+    }
+    if (registration !== undefined) {
+      this.registrations.delete(id);
+      await this.catalog.release(registration.sceneId, id);
+    }
+  }
+
+  /**
+   * Startup accounting, call once after loading reminders and before serving user actions.
+   *
+   * The durable registry is the source of truth: fences whose reminder is gone or no longer a
+   * location reminder are deleted, and reminders that should have a fence but lost it get one back.
+   */
+  async reconcile(activeReminders: Reminder[]): Promise<void> {
+    await this.exclusive(async (): Promise<void> => {
+      await this.ensureReady();
+      const expected: Map<string, Reminder> = new Map<string, Reminder>();
+      for (let index = 0; index < activeReminders.length; index++) {
+        const reminder = activeReminders[index];
+        if (!isLocationRegistrationCandidate(reminder)) { continue; }
+        expected.set(reminder.id, snapshot(reminder));
+      }
+      const mappings = await this.registry.list();
+      for (let index = 0; index < mappings.length; index++) {
+        const mapping = mappings[index];
+        if (expected.has(mapping.reminderId)) { continue; }
+        try { await this.platform.removeFence(mapping.fenceId); }
+        catch (_) { /* Already removed by the system or by the extension. */ }
+        await this.registry.removeByReminder(mapping.reminderId);
+        const stale = this.registrations.get(mapping.reminderId);
+        if (stale !== undefined) {
+          this.registrations.delete(mapping.reminderId);
+          try { await this.catalog.release(stale.sceneId, mapping.reminderId); }
+          catch (_) { /* The reminder is gone; a leaked scene reference is not worth aborting. */ }
+        }
+      }
+      const ids = Array.from(expected.keys());
+      for (const id of ids) {
+        const reminder = expected.get(id);
+        if (reminder === undefined) { continue; }
+        const mapped = await this.registry.findByReminder(id);
+        const inMemory = this.registrations.get(id);
+        if (mapped !== undefined && (this.delivery !== undefined || inMemory !== undefined)) {
+          // The extension delivers, or this process still holds the callback.
+          continue;
+        }
+        if (mapped !== undefined) {
+          // In-process delivery needs a live callback, so the fence the dead process left is
+          // replaceable only by removing it first.
+          try { await this.platform.removeFence(mapped.fenceId); }
+          catch (_) { /* Recreate anyway; the old fence dies with the registry entry. */ }
+          await this.registry.removeByReminder(id);
+        }
+        try {
+          await this.registerLocked(reminder);
+        } catch (error) {
+          this.onError(errorCode(error).length > 0 ? errorCode(error) : 'LOCATION_FENCE_REGISTRATION_FAILED');
+        }
+      }
+    });
   }
 
   async isInsideScene(sceneId: string): Promise<boolean> {

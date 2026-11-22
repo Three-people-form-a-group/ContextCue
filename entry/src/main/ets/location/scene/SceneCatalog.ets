@@ -37,6 +37,15 @@ function copyScene(scene: Scene): Scene {
 }
 
 /** One shared instance per process. All writes, reservations and reads are serialized. */
+/**
+ * 名字匹配：完全相同，或一方包含另一方（trim 后）。
+ * 空名字一律不匹配，避免空字符串"包含于"所有场景名。
+ */
+function isNameMatch(sceneName: string, name: string): boolean {
+  if (name.length === 0 || sceneName.length === 0) { return false; }
+  return sceneName === name || sceneName.includes(name) || name.includes(sceneName);
+}
+
 export class SceneCatalog implements SceneResolver {
   private gate: Promise<void> = Promise.resolve();
   private reservations: Map<string, Set<string>> = new Map<string, Set<string>>();
@@ -171,8 +180,14 @@ export class SceneCatalog implements SceneResolver {
   async resolveByName(sceneName: string): Promise<SceneResolveResult> {
     const name = sceneName.trim();
     const scenes = await this.findAll();
-    const candidates: SceneCandidate[] = scenes.filter((scene: Scene) => name.length > 0 && scene.name.trim() === name)
-      .map((scene: Scene): SceneCandidate => ({ id: scene.id, name: scene.name }));
+    // 精确同名优先：用户说"实验室"时，不能因为还存在"实验室楼"就变成歧义。
+    const exact: Scene[] = scenes.filter((scene: Scene) => name.length > 0 && scene.name.trim() === name);
+    // 其次互相包含：用户说"实验室楼"应能匹配到"实验室"（AI 地点解析的常见口语差异）。
+    const pool: Scene[] = exact.length > 0
+      ? exact
+      : scenes.filter((scene: Scene) => isNameMatch(scene.name.trim(), name));
+    const candidates: SceneCandidate[] =
+      pool.map((scene: Scene): SceneCandidate => ({ id: scene.id, name: scene.name }));
     if (candidates.length === 1) {
       return { status: SceneResolveStatus.RESOLVED, match: candidates[0], candidates: candidates };
     }

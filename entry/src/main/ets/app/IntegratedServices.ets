@@ -12,6 +12,9 @@ import { createPreferencesSceneStorage } from '../location/repository/Preference
 import { HarmonyLocationPlatform } from '../location/platform/HarmonyLocationPlatform';
 import { HarmonyPermissionGateway, LocationPermissionManager } from '../location/platform/LocationPermissionManager';
 import { LocationReminderAdapter } from '../location/trigger/LocationReminderAdapter';
+import { FENCE_EXTENSION_ABILITY_NAME } from '../location/platform/LocationPlatform';
+import { createFileFenceRegistry } from '../location/repository/FenceRegistryStore';
+import { ReminderService } from '../service/ReminderService';
 import { createSystemNotificationPort, createSystemTimePort } from '../reminder/adapter/SystemAdapters';
 import { TimeTriggerPort } from '../reminder/contract/TimeTriggerPort';
 import { LocationTriggerPort } from '../reminder/contract/LocationTriggerPort';
@@ -42,8 +45,12 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     });
   const permissionManager = new LocationPermissionManager(new HarmonyPermissionGateway(context));
   const platform = new HarmonyLocationPlatform(permissionManager);
-  // 新进程启动时清理上次运行遗留的系统围栏（兰铮适配器的约定：仅在干净进程调用一次）
-  platform.recoverOrphanFences().catch((): void => {});
+  // Durable fenceId <-> reminderId registry, shared with the fence extension process.
+  const fenceRegistry = createFileFenceRegistry(context.filesDir);
+  // 新进程启动时只清理"没有持久映射"的孤儿围栏；有映射的围栏保留给围栏扩展投递。
+  platform.recoverOrphanFences(fenceRegistry).catch((): void => {});
+
+  let locationAdapter: LocationReminderAdapter | undefined = undefined;
 
   const aiProvider = config === undefined
     ? new FakeAIModelProvider(buildDevFixtures())
@@ -54,12 +61,16 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     repository: new InMemoryReminderRepository(),
     timetableRepository: new InMemoryTimetableRepository(),
     createTimePort: (sink): TimeTriggerPort => createSystemTimePort(sink),
-    createLocationPort: (sink): LocationTriggerPort => new LocationReminderAdapter(catalog, platform, sink, now,
-      (code: string): void => { console.error('LocationAdapter error: ' + code); },
-      async (expected): Promise<boolean> => {
-        const current = await getAppServices().reminderService.findById(expected.id);
-        return current.success && current.data !== undefined && current.data.status === ReminderStatus.ACTIVE;
-      }),
+    createLocationPort: (sink): LocationTriggerPort => {
+      const adapter = new LocationReminderAdapter(catalog, platform, sink, now,
+        (code: string): void => { console.error('LocationAdapter error: ' + code); },
+        async (expected): Promise<boolean> => {
+          const current = await getAppServices().reminderService.findById(expected.id);
+          return current.success && current.data !== undefined && current.data.status === ReminderStatus.ACTIVE;
+        }, fenceRegistry, { fenceExtensionAbilityName: FENCE_EXTENSION_ABILITY_NAME });
+      locationAdapter = adapter;
+      return adapter;
+    },
     notificationPort: createSystemNotificationPort(),
     sceneResolver: catalog,
     aiProvider: aiProvider,
@@ -68,5 +79,19 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   });
   hilog.info(0x0000, 'ContextCue', 'AI provider: %{public}s',
     config === undefined ? 'Fake(dev fixtures)' : 'Zhipu(GLM)');
+  const adapter = locationAdapter;
+  if (adapter !== undefined) {
+    // Startup accounting: keep fences whose reminder is still an ACTIVE location reminder, drop the
+    // rest, and restore fences whose mapping was lost. Best effort; the next start retries.
+    reconcileFences(adapter, services.reminderService).catch((error: Object): void => {
+      console.error('Location reconcile error: ' + String(error));
+    });
+  }
   return services;
+}
+
+async function reconcileFences(adapter: LocationReminderAdapter, service: ReminderService): Promise<void> {
+  const all = await service.findAll();
+  if (!all.success || all.data === undefined) { return; }
+  await adapter.reconcile(all.data);
 }

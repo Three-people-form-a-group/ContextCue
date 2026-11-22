@@ -102,7 +102,37 @@ switch (error.code) {
 
 原则：**`retryable: false` 就绝不提供“重试”按钮**，否则用户会陷入反复失败。
 
-## 五、其余相关错误码（附带）
+## 五、围栏映射与扩展的错误码（V2 新增）
+
+这组错误码来自持久映射文件 `${filesDir}/fence_registry.json` 和围栏扩展进程，见 [geofence-lifecycle.md](docs/location/geofence-lifecycle.md)。
+
+| 错误码 | 谁抛出的 | 含义 | 可重试 | UI 建议 |
+| --- | --- | --- | --- | --- |
+| `FENCE_REGISTRY_WRITE_FAILED` | `FileFenceRegistry` | 围栏与提醒的对应关系写不进磁盘（沙箱、空间、一次性写失败） | 是 | 提示“地点提醒记录保存失败，请稍后重试” |
+| `FENCE_REGISTRY_REQUIRES_RECOVERY` | `FileFenceRegistry` | 上一次读写失败后映射进入 `uncertain` 状态，为避免误删系统围栏而拒绝继续操作 | 是（但要求重启应用） | 提示“请重启应用后重试” |
+| `FENCE_REGISTRY_CORRUPT` | `FileFenceRegistry` | 映射文件损坏：版本号不符、字段缺失、fenceId/reminderId 重复 | 是（需重启后重建） | 提示“地点提醒记录已损坏，请重启应用后重试” |
+| `FENCE_HANDLER_NOT_FOUND` | `FileFenceRegistry.markDelivered()` / 扩展 | 按 fenceId 找不到映射条目，说明这条围栏已经没有归属 | 是（重新创建提醒） | 提示“地点围栏已失效，请重新创建提醒” |
+
+要点：
+
+- 这三个 `FENCE_REGISTRY_*` 码是**fail closed**：写不进去就不假装注册成功。`register()` 里映射写失败会回滚刚建的围栏，所以用户看到这个错误时不会留下孤儿围栏。
+- `FENCE_REGISTRY_REQUIRES_RECOVERY` 和 `FENCE_REGISTRY_CORRUPT` 都不应该由 UI 自动重试，必须重启应用重新读一次文件。
+- 扩展进程里出现的 `FENCE_HANDLER_NOT_FOUND` 不会打扰用户（扩展只写日志，记成 `SKIPPED`），只有主进程的删除/对账路径才会把它抛给 UI。
+
+### 扩展进程的内部状态（不产生新错误码，写日志）
+
+| 结果 | 含义 |
+| --- | --- |
+| `DELIVERED` | 已弹通知、提醒已标 `TRIGGERED`、围栏与映射已清 |
+| `NOT_MAPPED` | geofenceId 在映射里找不到，直接放弃 |
+| `SKIPPED` | 门控拒绝（非进入事件、提醒非 ACTIVE、纯时间提醒、退出模式、BOTH 时间未到、已投递过） |
+| `REGISTRY_WRITE_FAILED` | 保留位写不进去，按 fail closed 不弹 |
+| `STORE_FAILED` / `FENCE_REMINDER_STORE_UNAVAILABLE` | 持久提醒仓储不可用或还没接线，不弹 |
+| `NOTIFY_FAILED` | 通知权限关闭或发布失败，会清掉保留位以便重试 |
+| `STATE_UPDATE_FAILED` | 通知弹了，但状态没写进仓储 |
+| `CLEANUP_FAILED` | 通知弹了、状态也写了，但围栏/映射没清干净 |
+
+## 六、其余相关错误码（附带）
 
 | 错误码 | 含义 | 可重试 |
 | --- | --- | --- |
@@ -114,10 +144,14 @@ switch (error.code) {
 | `LOCATION_REMINDER_NOT_COMMITTED` | 事件到达时提醒还没保存完 | 内部码，用户不可见 |
 | `SCENE_NOT_FOUND` | 场景已被删除 | 否（重新选择） |
 
-## 六、验证
+## 七、验证
 
 ```text
-Tests run: 177, Failure: 0, Error: 0, Pass: 177
+Tests run: 200, Failure: 0, Error: 0, Pass: 200
 ```
 
-新增用例 `surfaces stable location registration codes with retry guidance` 覆盖了权限拒绝、定位关闭、围栏注册失败、设备不支持四种情况，断言错误码与 `retryable` 都正确。
+覆盖情况：
+
+- `surfaces stable location registration codes with retry guidance`（ReminderService）：权限拒绝、定位关闭、围栏注册失败、设备不支持四种情况，断言错误码与 `retryable`；
+- `rolls_back_the_fence_when_the_mapping_cannot_be_written`（LocationAdapter）：映射写失败必须原样抛出 `FENCE_REGISTRY_WRITE_FAILED` 并回滚围栏；
+- `fails_closed_when_the_reservation_cannot_be_written`（FenceExtension）：保留位写失败不弹通知。

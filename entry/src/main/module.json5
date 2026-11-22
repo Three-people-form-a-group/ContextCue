@@ -66,6 +66,14 @@
     ],
     "extensionAbilities": [
       {
+        // Starts on a geofence crossing even when the app process is dead.
+        // The name is referenced by GnssGeofenceRequest.fenceExtensionAbilityName.
+        "name": "LocationFenceAbility",
+        "srcEntry": "./ets/location/extension/FenceAbility.ets",
+        "type": "fence",
+        "exported": false
+      },
+      {
         "name": "EntryBackupAbility",
         "srcEntry": "./ets/entrybackupability/EntryBackupAbility.ets",
         "type": "backup",

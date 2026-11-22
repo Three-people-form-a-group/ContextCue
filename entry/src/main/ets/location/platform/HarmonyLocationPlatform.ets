@@ -1,7 +1,7 @@
 import { geoLocationManager } from '@kit.LocationKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { Scene } from '../../model/Scene';
-import { LocationFix, LocationPlatform } from './LocationPlatform';
+import { FenceDelivery, FenceRegistry, LocationFix, LocationPlatform } from './LocationPlatform';
 import { LocationPermissionManager } from './LocationPermissionManager';
 
 /** The native boundary is replaceable in unit tests; device behavior is verified separately. */
@@ -64,7 +64,8 @@ export class HarmonyLocationPlatform implements LocationPlatform {
       accuracy: location.accuracy, occurredAt: location.timeStamp };
   }
 
-  async addFence(scene: Scene, enter: () => void, error: (code: string) => void): Promise<number> {
+  async addFence(scene: Scene, enter: () => void, error: (code: string) => void,
+    delivery?: FenceDelivery): Promise<number> {
     await this.checkReady();
     const request: geoLocationManager.GnssGeofenceRequest = {
       geofence: { latitude: scene.latitude, longitude: scene.longitude, radius: scene.radius,
@@ -73,6 +74,12 @@ export class HarmonyLocationPlatform implements LocationPlatform {
         expiration: Number.MAX_SAFE_INTEGER },
       monitorTransitionEvents: [geoLocationManager.GeofenceTransitionEvent.GEOFENCE_TRANSITION_EVENT_ENTER],
       geofenceTransitionCallback: (failure: BusinessError, transition: geoLocationManager.GeofenceTransition): void => {
+        // With a fence extension configured the extension owns delivery. The in-process callback
+        // may still fire on some devices (recorded in docs/location/geofence-verification.md); it
+        // stays silent on purpose so one crossing cannot notify twice or bypass the BOTH gate.
+        if (delivery !== undefined) {
+          return;
+        }
         if (failure !== undefined && failure !== null && failure.code !== 0) {
           error('LOCATION_NATIVE_CALLBACK_FAILED');
           return;
@@ -83,22 +90,40 @@ export class HarmonyLocationPlatform implements LocationPlatform {
         }
       }
     };
-    // V1 only supports geofence delivery while this process is alive.
-    // Deliberately omit notifications and fenceExtensionAbilityName: adding either would let the
-    // system act independently of TriggerCoordinator (duplicate notifications, BOTH-condition
-    // bypass, and no reminder state update). See docs/location/geofence-lifecycle.md.
+    // The callback above is mandatory even when the extension is used; fenceExtensionAbilityName
+    // additionally lets the system start the extension process after this app was killed.
+    // See docs/location/geofence-lifecycle.md.
+    if (delivery !== undefined) {
+      request.fenceExtensionAbilityName = delivery.fenceExtensionAbilityName;
+    }
     return this.native.add(request);
   }
 
   async removeFence(id: number): Promise<void> { await this.native.remove(id); }
 
-  /**
-   * V1 owns all GNSS fences in this app. Call once on a fresh process, before registering reminders.
-   * Events that fired while the process was dead are not replayed, so they are lost by design.
-   */
-  async recoverOrphanFences(): Promise<void> {
-    await this.checkReady();
+  async activeFenceIds(): Promise<number[]> {
     const fences = await this.native.active();
-    for (const id of fences.keys()) { await this.native.remove(id); }
+    const ids: number[] = [];
+    for (const id of fences.keys()) { ids.push(id); }
+    return ids;
+  }
+
+  /**
+   * Run once on a fresh process, before reminders are reconciled.
+   *
+   * A fence is "orphan" only when no durable mapping claims it. Mapped fences are kept even when
+   * this process knows nothing about them, because the fence extension may deliver their events
+   * after the process died. Reminder-level accounting (mapping without an ACTIVE reminder) is
+   * LocationReminderAdapter.reconcile()'s job.
+   */
+  async recoverOrphanFences(registry: FenceRegistry): Promise<void> {
+    await this.checkReady();
+    const mapped = await registry.list();
+    const claimed: Map<number, boolean> = new Map<number, boolean>();
+    for (let index = 0; index < mapped.length; index++) { claimed.set(mapped[index].fenceId, true); }
+    const fences = await this.native.active();
+    for (const id of fences.keys()) {
+      if (!claimed.has(id)) { await this.native.remove(id); }
+    }
   }
 }

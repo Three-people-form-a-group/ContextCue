@@ -30,6 +30,11 @@ registerLocationOperationError('LOCATION_UNREGISTER_BEFORE_REPLACE', '请先删�
 registerLocationOperationError('LOCATION_FIX_UNUSABLE', '当前位置不可用，请稍后重试', true);
 registerLocationOperationError('LOCATION_FIX_UNCERTAIN', '当前位置靠近地点边界，请靠近或远离一些后重试', true);
 registerLocationOperationError('LOCATION_STOP_CLEANUP_FAILED', '地点围栏清理失败，请稍后重试', true);
+// V2 围栏持久映射相关（扩展进程与主进程共用同一份映射文件）
+registerLocationOperationError('FENCE_REGISTRY_WRITE_FAILED', '地点提醒记录保存失败，请稍后重试', true);
+registerLocationOperationError('FENCE_REGISTRY_REQUIRES_RECOVERY', '地点提醒记录状态异常，请重启应用后重试', true);
+registerLocationOperationError('FENCE_REGISTRY_CORRUPT', '地点提醒记录已损坏，请重启应用后重试', true);
+registerLocationOperationError('FENCE_HANDLER_NOT_FOUND', '地点围栏与提醒的对应关系已失效，请重新创建提醒', true);
 registerLocationOperationError('SCENE_NOT_FOUND', '地点不存在，请重新选择', false);
 
 function locationErrorCode(error: Object | undefined): string {

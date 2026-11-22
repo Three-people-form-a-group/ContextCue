@@ -42,6 +42,24 @@ export default function sceneCatalogTest() {
       expect((await catalog.resolveByName('')).status).assertEqual(SceneResolveStatus.NOT_FOUND);
       expect((await catalog.resolveByName('商店')).status).assertEqual(SceneResolveStatus.NOT_FOUND);
     });
+    it('matches_partial_names_but_prefers_an_exact_one', 0, async () => {
+      let sequence: number = 0;
+      const catalog = new SceneCatalog(new MemoryTextStorage(), () => 1000,
+        () => 'scene-' + (++sequence), async () => false);
+      await catalog.create({ name: '实验室', latitude: 31, longitude: 121, radius: 100 });
+      // 用户口语多说一截，AI 解析出来的名字要能命中已有场景。
+      const result = await catalog.resolveByName(' 实验室楼 ');
+      expect(result.status).assertEqual(SceneResolveStatus.RESOLVED);
+      expect(result.match?.name).assertEqual('实验室');
+      expect((await catalog.resolveByName('实验')).status).assertEqual(SceneResolveStatus.RESOLVED);
+      // 精确同名永远优先，不能因为还存在更长的名字就变成歧义。
+      await catalog.create({ name: '实验室楼', latitude: 32, longitude: 120, radius: 100 });
+      const exact = await catalog.resolveByName('实验室');
+      expect(exact.status).assertEqual(SceneResolveStatus.RESOLVED);
+      expect(exact.match?.name).assertEqual('实验室');
+      // 只匹配到包含关系且不止一个时，仍然交给用户确认。
+      expect((await catalog.resolveByName('实验')).status).assertEqual(SceneResolveStatus.AMBIGUOUS);
+    });
     it('enforces_geofence_friendly_radius_range', 0, async () => {
       let sequence: number = 0;
       const catalog = new SceneCatalog(new MemoryTextStorage(), () => 1000,

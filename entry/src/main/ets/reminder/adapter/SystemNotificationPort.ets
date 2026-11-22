@@ -5,6 +5,7 @@ import notification from '@ohos.notification';
 import { WantAgent, wantAgent } from '@kit.AbilityKit';
 import { Reminder } from '../../model/Reminder';
 import { ReminderNotificationPort } from '../contract/ReminderNotificationPort';
+import { reminderNotificationId } from './NotificationId';
 
 const DEFAULT_BUNDLE: string = 'com.jyf.contextcue';
 const DEFAULT_ABILITY: string = 'EntryAbility';
@@ -29,11 +30,7 @@ export class SystemNotificationPort implements ReminderNotificationPort {
 
   /** 业务 id → 32 位通知 id（同一提醒重复通知会覆盖，而不是堆叠） */
   private notificationId(reminderId: string): number {
-    let hash: number = 0;
-    for (let i = 0; i < reminderId.length; i++) {
-      hash = (hash * 31 + reminderId.charCodeAt(i)) | 0;
-    }
-    return Math.abs(hash) % 100000 + 1000;
+    return reminderNotificationId(reminderId);
   }
 
   async notify(reminder: Reminder): Promise<void> {
@@ -44,7 +41,8 @@ export class SystemNotificationPort implements ReminderNotificationPort {
     const agentInfo: wantAgent.WantAgentInfo = {
       wants: [{
         bundleName: this.bundleName,
-        abilityName: this.abilityName
+        abilityName: this.abilityName,
+        parameters: { 'reminderId': reminder.id }
       }],
       actionType: wantAgent.OperationType.START_ABILITY,
       requestCode: requestCode,

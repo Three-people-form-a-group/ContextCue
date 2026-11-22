@@ -8,11 +8,30 @@ const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    // 冷启动由提醒通知拉起时，先把目标提醒交给页面（Index 消费后清空）
+    this.routeFromWant(want);
     // 本地配置（沙箱 files/ai.config.local.json）存在则启用真实 Provider，否则 Fake。
     const aiConfig = readLocalAIProviderConfig(this.context.filesDir);
     const services = initializeAppServices(aiConfig, this.context);
     hilog.info(DOMAIN, 'ContextCue', 'App services initialized, mode=%{public}s', services.mode);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    // 应用已在运行时点击提醒通知
+    this.routeFromWant(want);
+  }
+
+  /** 通知的 wantAgent 带 reminderId；写入 AppStorage 由根页面跳到详情 */
+  private routeFromWant(want: Want): void {
+    const parameters = want.parameters;
+    if (parameters === undefined) {
+      return;
+    }
+    const reminderId = parameters['reminderId'];
+    if (typeof reminderId === 'string' && reminderId !== '') {
+      AppStorage.setOrCreate<string>('ccPendingReminderId', reminderId);
+    }
   }
 
   onDestroy(): void {

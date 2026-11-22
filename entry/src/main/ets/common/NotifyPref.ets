@@ -25,6 +25,17 @@ export class NotifyPref {
     }
   }
 
+  /** 组合根在创建端口前同步载入，保证启动对账不会误排用户已关闭的时间提醒。 */
+  static loadSync(context: Context): void {
+    try {
+      const store: preferences.Preferences = preferences.getPreferencesSync(context, {
+        name: NotifyPref.STORE_NAME
+      });
+      NotifyPref.current = store.getSync(NotifyPref.KEY, true) as boolean;
+    } catch (_) {
+    }
+  }
+
   static async save(context: Context, value: boolean): Promise<void> {
     NotifyPref.current = value;
     try {

@@ -14,6 +14,8 @@ import { HarmonyLocationPlatform } from '../location/platform/HarmonyLocationPla
 import { HarmonyPermissionGateway, LocationPermissionManager } from '../location/platform/LocationPermissionManager';
 import { LocationReminderAdapter } from '../location/trigger/LocationReminderAdapter';
 import { createSystemNotificationPort, createSystemTimePort } from '../reminder/adapter/SystemAdapters';
+import { ReminderAgentTimePort } from '../reminder/adapter/ReminderAgentTimePort';
+import { NotifyPref } from '../common/NotifyPref';
 import { TimeTriggerPort } from '../reminder/contract/TimeTriggerPort';
 import { LocationTriggerPort } from '../reminder/contract/LocationTriggerPort';
 import { AppServices, AppRuntimeMode, createAppServices } from './AppServices';
@@ -30,6 +32,8 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   const now = (): number => Date.now();
   let sequence: number = 0;
   const newId = (): string => 'app-' + Date.now().toString() + '-' + (++sequence).toString();
+  // 启动对账会补排 ACTIVE 的时间提醒；必须先同步载入用户开关，否则会误排已关闭的提醒
+  NotifyPref.loadSync(context);
 
   const catalog = new SceneCatalog(createPreferencesSceneStorage(context), now, newId,
     async (sceneId: string): Promise<boolean> => {
@@ -51,11 +55,17 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     ? new FakeAIModelProvider(buildDevFixtures())
     : new ZhipuAIModelProvider(config, new OhosAIChatClient());
 
+  // 用数组持有组合根创建出来的端口实例，供启动对账使用
+  const timePorts: ReminderAgentTimePort[] = [];
   const services = createAppServices({
     mode: AppRuntimeMode.INTEGRATED,
     repository: new InMemoryReminderRepository(),
     timetableRepository: new InMemoryTimetableRepository(),
-    createTimePort: (sink): TimeTriggerPort => createSystemTimePort(sink),
+    createTimePort: (sink): TimeTriggerPort => {
+      const port = createSystemTimePort(sink);
+      timePorts.push(port);
+      return port;
+    },
     createLocationPort: (sink): LocationTriggerPort => new LocationReminderAdapter(catalog, platform, sink, now,
       (code: string): void => { console.error('LocationAdapter error: ' + code); },
       async (expected): Promise<boolean> => {
@@ -71,5 +81,17 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   });
   hilog.info(0x0000, 'ContextCue', 'AI provider: %{public}s',
     config === undefined ? 'Fake(dev fixtures)' : 'Zhipu(GLM)');
+  const port: ReminderAgentTimePort | undefined = timePorts.length > 0 ? timePorts[0] : undefined;
+  if (port !== undefined) {
+    // 启动对账：取消无效/重复的系统时间提醒，补排 ACTIVE，并恢复业务 id → 系统 id 的映射。
+    // 列表为空（内存仓储刚重启）时只保留系统排期，不清理孤儿，见 ReminderAgentTimePort.reconcile。
+    services.reminderService.findAll().then(async (all) => {
+      if (all.success && all.data !== undefined) {
+        await port.reconcile(all.data);
+      }
+    }).catch((error: Object): void => {
+      console.error('Time reconcile error: ' + String(error));
+    });
+  }
   return services;
 }

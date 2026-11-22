@@ -53,7 +53,7 @@ export function reminderStatusText(r: Reminder): string {
     return '已完成';
   }
   if (r.status === ReminderStatus.DISABLED) {
-    return '已禁用';
+    return '已暂停';
   }
   return '进行中';
 }

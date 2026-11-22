@@ -46,6 +46,8 @@ export struct ReminderEditPage {
   /** 已保存的场景列表与「用当前位置新增」面板 */
   @State scenes: Scene[] = [];
   @State showSceneCreator: boolean = false;
+  /** 非空表示正在修改这个场景；空串表示新增 */
+  @State sceneEditingId: string = '';
   @State sceneNameInput: string = '';
   @State sceneRadiusInput: string = '200';
   @State sceneBusy: boolean = false;
@@ -1010,13 +1012,41 @@ export struct ReminderEditPage {
 
   private beginSceneCreate(): void {
     this.showSceneCreator = true;
+    this.sceneEditingId = '';
     this.sceneNameInput = this.sceneInput.trim();
     this.sceneRadiusInput = '200';
     this.sceneError = '';
   }
 
-  /** 同名场景允许存在（不同地方可能同名），这里只提醒一次 */
-  private createScene(): void {
+  private selectedScene(): Scene | undefined {
+    for (let i = 0; i < this.scenes.length; i++) {
+      if (this.scenes[i].id === this.selectedSceneId) {
+        return this.scenes[i];
+      }
+    }
+    return undefined;
+  }
+
+  private beginSceneEdit(): void {
+    const scene: Scene | undefined = this.selectedScene();
+    if (scene === undefined) {
+      return;
+    }
+    this.showSceneCreator = true;
+    this.sceneEditingId = scene.id;
+    this.sceneNameInput = scene.name;
+    this.sceneRadiusInput = `${scene.radius}`;
+    this.sceneError = '';
+  }
+
+  private closeSceneEditor(): void {
+    this.showSceneCreator = false;
+    this.sceneEditingId = '';
+    this.sceneError = '';
+  }
+
+  /** 新增/修改共用一个面板；只有新增会检查同名 */
+  private submitScene(): void {
     const name: string = this.sceneNameInput.trim();
     if (name === '') {
       this.sceneError = '先给这个地点起个名字';
@@ -1025,6 +1055,10 @@ export struct ReminderEditPage {
     const radius: number = Number.parseInt(this.sceneRadiusInput, 10);
     if (!Number.isFinite(radius) || radius < SCENE_MIN_RADIUS_METERS || radius > SCENE_MAX_RADIUS_METERS) {
       this.sceneError = `范围需要 ${SCENE_MIN_RADIUS_METERS}–${SCENE_MAX_RADIUS_METERS} 米`;
+      return;
+    }
+    if (this.sceneEditingId !== '') {
+      this.saveSceneEdit(name, radius);
       return;
     }
     let duplicate: boolean = false;
@@ -1069,7 +1103,7 @@ export struct ReminderEditPage {
       }
       this.selectedSceneId = scene.id;
       this.sceneInput = scene.name;
-      this.showSceneCreator = false;
+      this.closeSceneEditor();
       this.saveError = '';
       this.getUIContext().getPromptAction().showToast({ message: `已保存地点「${scene.name}」` });
     } catch (error) {
@@ -1077,6 +1111,98 @@ export struct ReminderEditPage {
     } finally {
       this.sceneBusy = false;
     }
+  }
+
+  private async saveSceneEdit(name: string, radius: number): Promise<void> {
+    const service: LocationSceneService | undefined = this.sceneService();
+    if (service === undefined) {
+      this.sceneError = '当前运行模式不支持地点提醒';
+      return;
+    }
+    this.sceneBusy = true;
+    this.sceneError = '';
+    try {
+      const scene: Scene = await service.updateScene(this.sceneEditingId, name, radius);
+      try {
+        this.scenes = await service.list();
+      } catch (_) {
+      }
+      if (this.selectedSceneId === scene.id) {
+        this.sceneInput = scene.name;
+      }
+      this.closeSceneEditor();
+      this.saveError = '';
+      this.getUIContext().getPromptAction().showToast({ message: '已修改地点' });
+    } catch (error) {
+      this.sceneError = this.sceneMutationErrorMessage(error);
+    } finally {
+      this.sceneBusy = false;
+    }
+  }
+
+  private confirmDeleteScene(): void {
+    const scene: Scene | undefined = this.selectedScene();
+    if (scene === undefined) {
+      return;
+    }
+    this.getUIContext().getPromptAction().showDialog({
+      title: '删除地点',
+      message: `删除「${scene.name}」后不能再用于地点提醒；仍被提醒使用的地点不能删除。`,
+      buttons: [
+        { text: '取消', color: $r('app.color.text_secondary') },
+        { text: '删除', color: $r('app.color.detail_ink') }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        this.deleteScene(scene);
+      }
+    }).catch(() => {
+    });
+  }
+
+  private async deleteScene(scene: Scene): Promise<void> {
+    const service: LocationSceneService | undefined = this.sceneService();
+    if (service === undefined) {
+      return;
+    }
+    try {
+      await service.deleteScene(scene.id);
+      try {
+        this.scenes = await service.list();
+      } catch (_) {
+      }
+      if (this.selectedSceneId === scene.id) {
+        this.selectedSceneId = '';
+        this.sceneInput = '';
+      }
+      this.saveError = '';
+      this.getUIContext().getPromptAction().showToast({ message: '已删除地点' });
+    } catch (error) {
+      this.getUIContext().getPromptAction().showToast({ message: this.sceneMutationErrorMessage(error) });
+    }
+  }
+
+  private sceneMutationErrorMessage(error: Object | undefined): string {
+    const code: string = error === undefined
+      ? ''
+      : (error instanceof Error ? error.message : String(error)).trim();
+    if (code === 'SCENE_IN_USE') {
+      return '这个地点还被提醒使用，先修改或删除相关提醒后再试';
+    }
+    if (code === 'SCENE_NOT_FOUND') {
+      return '地点已不存在，列表已刷新';
+    }
+    if (code === 'SCENE_INVALID_NAME') {
+      return '地点名称不能为空，最多 100 个字';
+    }
+    if (code === 'LOCATION_INVALID_RADIUS') {
+      return `范围需要 ${SCENE_MIN_RADIUS_METERS}–${SCENE_MAX_RADIUS_METERS} 米`;
+    }
+    if (code === 'SCENE_STORAGE_WRITE_FAILED' || code === 'SCENE_STORAGE_REQUIRES_RECOVERY' ||
+      code === 'SCENE_STORAGE_OPEN_FAILED' || code === 'SCENE_STORAGE_INVALID') {
+      return '本地地点记录写入失败，请重启应用后重试';
+    }
+    return '操作失败，请稍后重试';
   }
 
   private sceneErrorMessage(error: Object | undefined): string {
@@ -1120,6 +1246,31 @@ export struct ReminderEditPage {
           this.SelectedSceneLine()
 
           if (!this.showSceneCreator) {
+            if (this.selectedSceneId !== '') {
+              Row({ space: StyleConstants.SPACE_LG }) {
+                Text('改名')
+                  .fontSize(StyleConstants.FONT_SECTION_INDEX)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(Theme.ink(this.uiMode))
+                  .decoration({ type: TextDecorationType.Underline })
+                  .height(32)
+                  .onClick(() => {
+                    this.beginSceneEdit();
+                  })
+                Text('删除')
+                  .fontSize(StyleConstants.FONT_SECTION_INDEX)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(Theme.alert(this.uiMode))
+                  .decoration({ type: TextDecorationType.Underline })
+                  .height(32)
+                  .onClick(() => {
+                    this.confirmDeleteScene();
+                  })
+                Blank()
+              }
+              .width('100%')
+              .alignItems(VerticalAlign.Center)
+            }
             this.SceneList()
             Row() {
               Text('＋ 用当前位置新增地点')
@@ -1134,6 +1285,13 @@ export struct ReminderEditPage {
             .onClick(() => {
               this.beginSceneCreate();
             })
+            if (this.scenes.length > 50) {
+              Text(`已保存 ${this.scenes.length} 个地点，建议整理不常用的地点`)
+                .fontSize(9)
+                .fontColor(Theme.sub(this.uiMode))
+                .maxLines(2)
+                .width('100%')
+            }
           } else {
             this.SceneCreator()
           }
@@ -1247,6 +1405,11 @@ export struct ReminderEditPage {
   @Builder
   SceneCreator() {
     Column({ space: StyleConstants.SPACE_XS }) {
+      Text(this.sceneEditingId === '' ? '以当前位置为中心新增' : '修改名称或范围')
+        .fontSize(10)
+        .fontColor(Theme.sub(this.uiMode))
+        .width('100%')
+
       TextInput({
         placeholder: '地点名称，例如 实验室',
         text: this.sceneNameInput
@@ -1313,10 +1476,11 @@ export struct ReminderEditPage {
           .height(StyleConstants.TOUCH_TARGET_MIN)
           .textAlign(TextAlign.Center)
           .onClick(() => {
-            this.showSceneCreator = false;
-            this.sceneError = '';
+            this.closeSceneEditor();
           })
-        Text(this.sceneBusy ? '正在定位…' : '定位并保存')
+        Text(this.sceneBusy
+          ? (this.sceneEditingId === '' ? '正在定位…' : '保存中…')
+          : (this.sceneEditingId === '' ? '定位并保存' : '保存修改'))
           .fontSize(StyleConstants.FONT_SECTION_INDEX)
           .fontWeight(900)
           .fontColor(this.sceneBusy ? Theme.sub(this.uiMode) : Theme.text(this.uiMode))
@@ -1325,7 +1489,7 @@ export struct ReminderEditPage {
           .textAlign(TextAlign.Center)
           .onClick(() => {
             if (!this.sceneBusy) {
-              this.createScene();
+              this.submitScene();
             }
           })
         Blank()

@@ -37,6 +37,25 @@ export class LocationSceneService {
     return this.catalog.findAll();
   }
 
+  /** 只改名称和半径，坐标保持场景原值。 */
+  async updateScene(id: string, name: string, radius: number): Promise<Scene> {
+    const scene = await this.catalog.findById(id);
+    if (scene === undefined) {
+      throw new Error('SCENE_NOT_FOUND');
+    }
+    return this.catalog.update(id, {
+      name: name,
+      latitude: scene.latitude,
+      longitude: scene.longitude,
+      radius: radius
+    });
+  }
+
+  /** 被提醒引用时 SceneCatalog 会抛 SCENE_IN_USE。 */
+  async deleteScene(id: string): Promise<void> {
+    await this.catalog.delete(id);
+  }
+
   async state(): Promise<SceneLocationState> {
     try {
       await this.permission.checkReady();

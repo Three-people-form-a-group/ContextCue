@@ -84,14 +84,19 @@ export default function aiServiceTest() {
       expect(outcome.issues[0].code).assertEqual(AIParseIssueCode.INVALID_JSON);
       expect(outcome.draft).assertUndefined();
     });
-    it('requires confirmation for scene not found', 0, async () => {
+    it('requires confirmation for scene not found with a partial draft (D9)', 0, async () => {
       const fixtures = new Map<string, string>();
       fixtures.set('input', '{"content":"带电脑","triggerType":"LOCATION","triggerTime":null,"sceneName":"实验室","ambiguous":false}');
       const resolver = new TestResolver();
       resolver.result = { status: SceneResolveStatus.NOT_FOUND, candidates: [] };
       const outcome = await new DefaultAIService(new FakeAIModelProvider(fixtures), resolver).parseReminder('input', context);
       expect(outcome.status).assertEqual(AIParseStatus.NEEDS_CONFIRMATION);
-      expect(outcome.draft).assertUndefined();
+      // D9：地点未解析也回填部分草稿，编辑台据此预填并用地点名引导选择/新建
+      expect(outcome.draft?.content).assertEqual('带电脑');
+      expect(outcome.draft?.triggerType).assertEqual(TriggerType.LOCATION);
+      expect(outcome.draft?.sceneName).assertEqual('实验室');
+      expect(outcome.draft?.sceneId).assertUndefined();
+      expect(outcome.issues[0].code).assertEqual(AIParseIssueCode.UNRESOLVED_LOCATION);
     });
     it('contains unexpected provider exception', 0, async () => {
       const outcome = await new DefaultAIService(new ThrowingProvider(), new TestResolver()).parseReminder('input', context);

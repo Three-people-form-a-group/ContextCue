@@ -5,7 +5,7 @@ import { Theme } from '../common/Theme';
 import { RouterConstants, ReminderDetailNavParam, ReminderEditNavParam } from '../common/RouterConstants';
 import { TimetableView } from '../components/TimetableView';
 import { Reminder } from '../model/Reminder';
-import { LocationTriggerMode, TriggerType } from '../model/ReminderEnums';
+import { LocationTriggerMode, ReminderStatus, TriggerType } from '../model/ReminderEnums';
 import { getAppServices } from '../app/AppServiceRegistry';
 import { RefreshSignal } from '../common/RefreshSignal';
 import {
@@ -125,6 +125,9 @@ export struct ReminderListPage {
     const out: Reminder[] = [];
     const all: Reminder[] = this.allReminders();
     for (let i = 0; i < all.length; i++) {
+      if (all[i].status === ReminderStatus.DISABLED) {
+        continue;
+      }
       const t: number | undefined = all[i].triggerTime;
       if (t === undefined) {
         continue;
@@ -135,6 +138,22 @@ export struct ReminderListPage {
       }
     }
     return this.sortItems(out);
+  }
+
+  /** 某天已暂停的条数：只做提示，不混进当天列表 */
+  private pausedOnDate(day: number): number {
+    let count: number = 0;
+    const all: Reminder[] = this.allReminders();
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].status !== ReminderStatus.DISABLED || all[i].triggerTime === undefined) {
+        continue;
+      }
+      const d: Date = new Date(all[i].triggerTime as number);
+      if (d.getFullYear() === this.calYear && d.getMonth() + 1 === this.calMonth && d.getDate() === day) {
+        count++;
+      }
+    }
+    return count;
   }
 
   private hasReminder(day: number): boolean {
@@ -224,7 +243,8 @@ export struct ReminderListPage {
   /** 逾期 = 有触发时间、时间在今天 0 点之前、且未完成 */
   private isOverdue(item: Reminder): boolean {
     const t: number | undefined = item.triggerTime;
-    if (t === undefined || isCompleted(item)) {
+    // 已暂停和已完成都不算逾期；暂停的提醒在下面单独的区块里
+    if (t === undefined || !isPending(item)) {
       return false;
     }
     const now: Date = new Date();
@@ -247,6 +267,28 @@ export struct ReminderListPage {
       return (ta === undefined ? 0 : ta) - (tb === undefined ? 0 : tb);
     });
     return out;
+  }
+
+  /** 已暂停：单独成区，保留入口让用户能恢复 */
+  private pausedItems(): Reminder[] {
+    const all: Reminder[] = this.allReminders();
+    const out: Reminder[] = [];
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].status === ReminderStatus.DISABLED) {
+        out.push(all[i]);
+      }
+    }
+    return this.sortItems(out);
+  }
+
+  private async resumeReminder(item: Reminder): Promise<void> {
+    const result = await getAppServices().reminderService.enable(item.id);
+    if (!result.success) {
+      this.showActionError(result.error === undefined ? '恢复失败' : result.error.message);
+      return;
+    }
+    RefreshSignal.bump();
+    this.showActionError('已恢复提醒');
   }
 
   /** 逾期日期标签：昨天 / 前天 / 8/10 */
@@ -757,6 +799,84 @@ export struct ReminderListPage {
       })
   }
 
+  /** 已暂停区：不参与逾期/分组，但保留查看和恢复入口 */
+  @Builder
+  PausedBlock() {
+    Column({ space: 10 }) {
+      Row({ space: 8 }) {
+        Column()
+          .width(3)
+          .height(16)
+          .backgroundColor(Theme.rule(this.uiMode))
+        Text('已暂停')
+          .fontSize(20)
+          .fontWeight(900)
+          .fontColor(Theme.sub(this.uiMode))
+        Blank()
+        Text(`${this.pausedItems().length} 条`)
+          .fontSize(11)
+          .fontColor(Theme.sub(this.uiMode))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 4, right: 4, top: 10, bottom: 2 })
+
+      ForEach(this.pausedItems(), (item: Reminder) => {
+        this.PausedRow(item)
+      }, (item: Reminder) => `paused-${this.dataVersion}-${reminderRenderKey(item)}`)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  PausedRow(item: Reminder) {
+    Row({ space: 12 }) {
+      Text(this.timeLabel(item))
+        .fontSize(12)
+        .fontColor(Theme.sub(this.uiMode))
+        .width(62)
+
+      Column({ space: 3 }) {
+        Text(item.content)
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.text(this.uiMode))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+        if (hasLocation(item)) {
+          Text(this.placeLabel(item))
+            .fontSize(11)
+            .fontColor(Theme.sub(this.uiMode))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+      .onClick(() => {
+        this.goDetail(item);
+      })
+
+      Text('恢复')
+        .fontSize(11)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(Theme.ink(this.uiMode))
+        .decoration({ type: TextDecorationType.Underline })
+        .height(30)
+        .padding({ left: 8, right: 8 })
+        .textAlign(TextAlign.Center)
+        .onClick(() => {
+          this.resumeReminder(item);
+        })
+    }
+    .width('100%')
+    .padding({ left: 10, right: 4, top: 8, bottom: 8 })
+    .border({ width: { left: 3 }, color: Theme.rule(this.uiMode) })
+    .alignItems(VerticalAlign.Center)
+  }
+
   @Builder
   GroupListBlock() {
     Column({ space: StyleConstants.SPACE_SECTION }) {
@@ -781,8 +901,12 @@ export struct ReminderListPage {
           .width('100%')
         }
       }, (group: GroupDef) => group.overline)
+      if (this.pausedItems().length > 0) {
+        this.PausedBlock()
+      }
       if (this.overdueItems().length === 0 && this.liveGroupItems(0).length === 0 &&
-        this.liveGroupItems(1).length === 0 && this.liveGroupItems(2).length === 0) {
+        this.liveGroupItems(1).length === 0 && this.liveGroupItems(2).length === 0 &&
+        this.pausedItems().length === 0) {
         Text('还没有提醒。在「今日」页新建一条试试。')
           .fontSize(StyleConstants.FONT_BODY_SM)
           .fontColor(Theme.sub(this.uiMode))
@@ -1034,6 +1158,13 @@ export struct ReminderListPage {
             ForEach(this.itemsOnDate(this.selectedDay), (item: Reminder, index: number) => {
               this.ScheduleEntry(item, index === 0 && !isCompleted(item), false, index)
             }, (item: Reminder, index: number) => `${this.dataVersion}-${reminderRenderKey(item)}-${index}`)
+            if (this.pausedOnDate(this.selectedDay) > 0) {
+              Text(`另有 ${this.pausedOnDate(this.selectedDay)} 条已暂停，可在“全部”里恢复`)
+                .fontSize(10)
+                .fontColor(Theme.sub(this.uiMode))
+                .width('100%')
+                .padding({ top: StyleConstants.SPACE_SM, bottom: StyleConstants.SPACE_SM })
+            }
           }
           .width('100%')
         }

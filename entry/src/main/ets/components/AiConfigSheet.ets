@@ -137,7 +137,7 @@ export struct AiConfigSheet {
 
         Scroll() {
           Column({ space: 10 }) {
-            Text('粘贴 AI 配置 JSON，保存到本机应用沙箱，重启应用后生效；凭证只留在本机，不会提交到仓库。')
+            Text('粘贴 AI 配置 JSON，保存到本机应用沙箱，重启应用后生效；凭证只保存在本机。')
               .fontSize(11)
               .fontColor(Theme.sub(this.uiMode))
               .width('100%')
@@ -158,7 +158,7 @@ export struct AiConfigSheet {
               .width('100%')
 
             Row({ space: 10 }) {
-              Text(this.configured ? '已配置（重启后生效）' : '当前未配置：使用示例数据')
+              Text(this.configured ? '已配置（重启后生效）' : '当前未配置：解析使用内置示例')
                 .fontSize(11)
                 .fontWeight(FontWeight.Bold)
                 .fontColor(this.configured ? Theme.accent(this.uiMode) : Theme.sub(this.uiMode))

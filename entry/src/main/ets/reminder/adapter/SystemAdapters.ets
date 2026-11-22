@@ -20,7 +20,7 @@ import { SystemNotificationPort } from './SystemNotificationPort';
  * 注意：时间提醒由系统提醒代理在到点时直接展示，不会回调 TriggerEventSink，
  * 因此时间提醒的状态不会自动变成 TRIGGERED。
  */
-export function createSystemTimePort(_sink: TriggerEventSink): TimeTriggerPort {
+export function createSystemTimePort(_sink: TriggerEventSink): ReminderAgentTimePort {
   return new ReminderAgentTimePort();
 }
 

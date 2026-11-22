@@ -13,8 +13,8 @@
       "value": "label"
     },
     {
-      "name": "permission_reason_location",
-      "value": "用于基于用户当前位置触发地理围栏提醒"
+      "name": "location_permission_reason",
+      "value": "用于判断你是否已到达提醒中的地点，并在到达时提醒你。"
     },
     {
       "name": "permission_reason_reminder",

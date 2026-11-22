@@ -74,7 +74,7 @@ export struct TimetableImportSheet {
     });
     this.busy = false;
     if (result.rawResponse === undefined) {
-      this.issuesText = '示例识别失败（Fake 数据集没有对应条目）';
+      this.issuesText = '内置示例里没有这张图，换个说法或粘贴 JSON 试试';
       return;
     }
     this.text = result.rawResponse;
@@ -133,7 +133,7 @@ export struct TimetableImportSheet {
 
         Scroll() {
           Column({ space: 10 }) {
-            Text('粘贴教务 JSON，或先用「示例识别」看一条完整链路（Fake 视觉模型 → 解析 → 预览）。')
+            Text('粘贴教务 JSON，或先用「示例识别」走一遍导入流程。')
               .fontSize(11)
               .fontColor(Theme.sub(this.uiMode))
               .width('100%')

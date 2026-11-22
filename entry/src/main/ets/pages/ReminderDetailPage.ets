@@ -337,7 +337,32 @@ export struct ReminderDetailPage {
 
   @Builder
   CompletionStatus() {
-    if (isCompleted(this.card)) {
+    if (this.card.status === ReminderStatus.DISABLED) {
+      Row({ space: 8 }) {
+        Text('已暂停')
+          .fontSize(13)
+          .fontWeight(900)
+          .fontColor(Theme.sub(this.uiMode))
+        Text('不会提醒，可随时恢复')
+          .fontSize(11)
+          .fontColor(Theme.sub(this.uiMode))
+        Blank()
+        Text('恢复提醒')
+          .fontSize(11)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.ink(this.uiMode))
+          .decoration({ type: TextDecorationType.Underline })
+          .height(StyleConstants.TOUCH_TARGET_MIN)
+          .padding({ left: 8, right: 8 })
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.resumeReminder();
+          })
+      }
+      .width('100%')
+      .padding({ top: 8, bottom: 8 })
+      .margin({ top: 12 })
+    } else if (isCompleted(this.card)) {
       Row({ space: 8 }) {
         Text('✓')
           .fontSize(17)
@@ -494,6 +519,49 @@ export struct ReminderDetailPage {
     this.getUIContext().getPromptAction().showToast({ message: '已恢复为待办' });
   }
 
+  /** 暂停：注销时间代理与围栏，保留记录，可随时恢复 */
+  private async pauseReminder(): Promise<void> {
+    const result = await getAppServices().reminderService.disable(this.card.id);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '暂停失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    await this.refreshFromStore();
+    this.getUIContext().getPromptAction().showToast({ message: '已暂停提醒' });
+  }
+
+  private confirmPause(): void {
+    this.getUIContext().getPromptAction().showDialog({
+      title: '暂停提醒',
+      message: '暂停后不会再提醒；地点提醒会同时取消围栏。可以随时恢复。',
+      buttons: [
+        { text: '取消', color: $r('app.color.text_secondary') },
+        { text: '暂停', color: $r('app.color.detail_ink') }
+      ]
+    }).then((res: promptAction.ShowDialogSuccessResponse) => {
+      if (res.index === 1) {
+        this.pauseReminder();
+      }
+    }).catch(() => {
+    });
+  }
+
+  private async resumeReminder(): Promise<void> {
+    const result = await getAppServices().reminderService.enable(this.card.id);
+    if (!result.success) {
+      this.getUIContext().getPromptAction().showToast({
+        message: result.error === undefined ? '恢复失败' : result.error.message
+      });
+      return;
+    }
+    RefreshSignal.bump();
+    await this.refreshFromStore();
+    this.getUIContext().getPromptAction().showToast({ message: '已恢复提醒' });
+  }
+
   private async deleteReminder(): Promise<void> {
     const result = await getAppServices().reminderService.delete(this.card.id);
     if (!result.success) {
@@ -557,6 +625,20 @@ export struct ReminderDetailPage {
       .width('100%')
       .justifyContent(FlexAlign.Center)
 
+      if (this.card.status === ReminderStatus.ACTIVE) {
+        Text('暂停提醒')
+          .fontSize(StyleConstants.FONT_BODY_SM)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Theme.sub(this.uiMode))
+          .decoration({ type: TextDecorationType.Underline })
+          .height(StyleConstants.TOUCH_TARGET_MIN)
+          .padding({ left: StyleConstants.SPACE_LG, right: StyleConstants.SPACE_LG })
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.confirmPause();
+          })
+      }
+
       Text('删除此提醒')
         .fontSize(StyleConstants.FONT_BODY_SM)
         .fontWeight(FontWeight.Bold)
@@ -569,7 +651,7 @@ export struct ReminderDetailPage {
           this.confirmDelete();
         })
 
-      Text('修改会保存在本次演示的临时数据中')
+      Text('修改会保存到这条提醒')
         .fontSize(StyleConstants.FONT_CAPTION)
         .fontColor($r('app.color.detail_note'))
         .width('100%')

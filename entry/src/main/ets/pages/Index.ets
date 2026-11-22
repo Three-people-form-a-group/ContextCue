@@ -1,5 +1,5 @@
 import { StyleConstants } from '../common/StyleConstants';
-import { RouterConstants } from '../common/RouterConstants';
+import { RouterConstants, ReminderDetailNavParam } from '../common/RouterConstants';
 import { UiMode } from '../common/UiMode';
 import { PaperStore } from '../common/PaperStore';
 import { DraftStore } from '../common/DraftStore';
@@ -32,6 +32,8 @@ struct Index {
   @State currentTabIndex: number = 0;
 
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
+  /** 点击提醒通知时由 EntryAbility 写入；消费后清空 */
+  @StorageLink('ccPendingReminderId') @Watch('onPendingReminder') pendingReminderId: string = '';
 
   aboutToAppear(): void {
     // 读回上次选择的界面模式（极简 / 手账）
@@ -41,6 +43,29 @@ struct Index {
     RefreshSignal.ensure();
     NotifyPref.load(getContext(this));
     this.ensureNotificationPermission();
+    // 冷启动时 @Watch 不会触发，这里补一次；等 Navigation 完成首次挂载再跳
+    setTimeout(() => {
+      this.openPendingReminder();
+    }, 0);
+  }
+
+  private onPendingReminder(): void {
+    this.openPendingReminder();
+  }
+
+  private openPendingReminder(): void {
+    const reminderId: string = this.pendingReminderId;
+    if (reminderId === '') {
+      return;
+    }
+    this.pendingReminderId = '';
+    const param: ReminderDetailNavParam = new ReminderDetailNavParam(reminderId);
+    const names: string[] = this.pathStack.getAllPathName();
+    if (names.length > 0 && names[names.length - 1] === RouterConstants.PAGE_REMINDER_DETAIL) {
+      this.pathStack.replacePathByName(RouterConstants.PAGE_REMINDER_DETAIL, param);
+    } else {
+      this.pathStack.pushPathByName(RouterConstants.PAGE_REMINDER_DETAIL, param);
+    }
   }
 
   /**

@@ -277,7 +277,9 @@ export class ReminderService {
         await this.cleanup(next);
         await this.restore(current);
         const failure = registrationError(error);
-        return { success: false, error: { code: failure.code, message: '新触发条件注册失败：' + failure.message,
+        // 稳定码的文案已经面向用户，不要再套“注册失败”这种开发口吻
+        return { success: false, error: { code: failure.code,
+          message: failure.code === 'TRIGGER_REGISTRATION_ERROR' ? '新触发条件注册失败：' + failure.message : failure.message,
           retryable: failure.retryable } };
       }
     }

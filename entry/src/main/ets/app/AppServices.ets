@@ -8,6 +8,7 @@ import { TimeTriggerPort } from '../reminder/contract/TimeTriggerPort';
 import { LocationTriggerPort } from '../reminder/contract/LocationTriggerPort';
 import { ReminderNotificationPort } from '../reminder/contract/ReminderNotificationPort';
 import { SceneResolver } from '../reminder/contract/SceneResolver';
+import { LocationSceneService } from '../location/scene/LocationSceneService';
 import { TriggerConditionEvent } from '../reminder/contract/TriggerConditionEvent';
 import { TriggerEventSink } from '../reminder/contract/TriggerEventSink';
 import { TimetableService } from '../timetable/TimetableService';
@@ -24,6 +25,8 @@ export interface AppServices {
   readonly reminderService: ReminderService;
   readonly aiService: AIService;
   readonly timetableService: TimetableService;
+  /** 场景列表与定位授权；开发组合没有真实定位能力，因此缺省。 */
+  readonly sceneService?: LocationSceneService;
   readonly mode: AppRuntimeMode;
 }
 
@@ -36,6 +39,7 @@ export interface AppServiceDependencies {
   createLocationPort: (sink: TriggerEventSink) => LocationTriggerPort;
   notificationPort: ReminderNotificationPort;
   sceneResolver: SceneResolver;
+  sceneService?: LocationSceneService;
   aiProvider: AIModelProvider;
   now: () => number;
   newId: () => string;
@@ -65,5 +69,11 @@ export function createAppServices(dependencies: AppServiceDependencies): AppServ
   const coordinator = new TriggerCoordinator(service, locationPort, dependencies.notificationPort, dependencies.now);
   const aiService = new DefaultAIService(dependencies.aiProvider, dependencies.sceneResolver);
   events.bind(coordinator);
-  return { reminderService: service, aiService: aiService, timetableService: timetableService, mode: dependencies.mode };
+  return {
+    reminderService: service,
+    aiService: aiService,
+    timetableService: timetableService,
+    sceneService: dependencies.sceneService,
+    mode: dependencies.mode
+  };
 }

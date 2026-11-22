@@ -489,6 +489,8 @@ TIME、LOCATION 和 BOTH 三种提醒都必须统一经过 TriggerCoordinator，
 - 位置在时间到达前曾经满足、但到达时已经离开，不视为联合条件满足。
 - 每个 Reminder 最多发送一次最终通知，通知成功后状态从 `ACTIVE` 更新为 `TRIGGERED` 并记录 `triggeredAt`。
 
+> **V2 降级说明（2026-11-22 组长确认）**：地点提醒改由系统 `FenceExtensionAbility` 投递后，时间代理不再为 `BOTH` 排期，扩展进程也无法在 `triggerTime` 时刻主动唤醒。因此「`triggerTime` 到达时已经位于目标场景 → 立即触发」在 V2 降级为：**只有时间已过之后进入目标场景才会触发**；到点时已经在该场景内不会单独弹出。`GNSS DWELL` 转换目前无法锚定到 `triggerTime`，列为后续候选。创建 `BOTH` 提醒时，UI 需明确提示「到点后需进入所选地点才会提醒」。
+
 通知成功不等于用户完成事项，不能自动更新为 `COMPLETED`。只有用户主动确认完成后，ReminderService 才把状态更新为 `COMPLETED` 并记录 `completedAt`。
 
 因此时间模块和定位模块不能各自直接发送 TIME、LOCATION 或 BOTH 通知。三种类型的最终决定都由统一 TriggerCoordinator 完成。

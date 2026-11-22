@@ -1,5 +1,6 @@
 import { reminderAgentManager } from '@kit.BackgroundTasksKit';
 import { Reminder } from '../../model/Reminder';
+import { TriggerType } from '../../model/ReminderEnums';
 import { NotifyPref } from '../../common/NotifyPref';
 import { TimeTriggerPort } from '../contract/TimeTriggerPort';
 
@@ -28,12 +29,17 @@ export class ReminderAgentTimePort implements TimeTriggerPort {
   }
 
   async schedule(reminder: Reminder): Promise<void> {
-    // 应用内「到点提醒」关闭时不再排期（用户在设置里主动关掉的）
+    // 应用内「时间提醒」关闭时不再排期（用户在设置里主动关掉的）
     if (!NotifyPref.enabled()) {
       return;
     }
+    // 2026-11-22 组长确认：BOTH 不交给系统时间代理。
+    // 系统代理只认时间，无法与地点条件做 AND；BOTH 改为「进入地点且时间已过」时
+    // 由地点链路触发。代价：到点时人已经在地点内不会单独弹，见设计规范 §8。
+    if (reminder.triggerType !== TriggerType.TIME) {
+      return;
+    }
     if (reminder.triggerTime === undefined) {
-      // 纯地点提醒没有时间，交给 LocationTriggerPort
       return;
     }
     if (reminder.triggerTime <= Date.now()) {

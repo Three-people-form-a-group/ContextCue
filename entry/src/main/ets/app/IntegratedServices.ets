@@ -8,6 +8,7 @@ import { InMemoryReminderRepository } from '../repository/InMemoryReminderReposi
 import { InMemoryTimetableRepository } from '../timetable/repository/InMemoryTimetableRepository';
 import { ReminderStatus } from '../model/ReminderEnums';
 import { SceneCatalog } from '../location/scene/SceneCatalog';
+import { LocationSceneService } from '../location/scene/LocationSceneService';
 import { createPreferencesSceneStorage } from '../location/repository/PreferencesSceneStorage';
 import { HarmonyLocationPlatform } from '../location/platform/HarmonyLocationPlatform';
 import { HarmonyPermissionGateway, LocationPermissionManager } from '../location/platform/LocationPermissionManager';
@@ -42,6 +43,7 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     });
   const permissionManager = new LocationPermissionManager(new HarmonyPermissionGateway(context));
   const platform = new HarmonyLocationPlatform(permissionManager);
+  const sceneService = new LocationSceneService(catalog, platform, permissionManager);
   // 新进程启动时清理上次运行遗留的系统围栏（兰铮适配器的约定：仅在干净进程调用一次）
   platform.recoverOrphanFences().catch((): void => {});
 
@@ -62,6 +64,7 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
       }),
     notificationPort: createSystemNotificationPort(),
     sceneResolver: catalog,
+    sceneService: sceneService,
     aiProvider: aiProvider,
     now: now,
     newId: newId

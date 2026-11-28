@@ -95,6 +95,10 @@ class MemoryFenceRegistry implements FenceRegistry {
     const entry = this.lookup(fenceId);
     if (entry !== undefined) { entry.lastDeliveredAt = undefined; }
   }
+  async clear(): Promise<void> {
+    if (this.failRemove) { throw new Error('FENCE_REGISTRY_WRITE_FAILED'); }
+    this.entries = [];
+  }
   async list(): Promise<FenceMapping[]> { return this.entries.map((item: FenceMapping) => item); }
 }
 class RecordingSink implements TriggerEventSink {
@@ -525,6 +529,77 @@ export default function locationAdapterTest() {
       expect(platform.callbacks.has(42)).assertTrue();
       expect(platform.deliveries.length).assertEqual(0);
       await adapter.stop();
+    });
+    it('reset_clears_registry_and_fences_without_location_permission', 0, async () => {
+      const platform = new FakePlatform();
+      const registry = new MemoryFenceRegistry();
+      const catalog = await makeCatalog();
+      const adapter = new LocationReminderAdapter(catalog, platform, new RecordingSink(), () => 100000, () => {},
+        alwaysReady, registry);
+      await adapter.register(reminder('r'));
+      expect(registry.entries.length).assertEqual(1);
+      expect(platform.callbacks.size).assertEqual(1);
+      // Reset is the recovery path for a broken permission state: it must not check readiness.
+      platform.ready = false;
+      await adapter.reset();
+      expect(registry.entries.length).assertEqual(0);
+      expect(platform.callbacks.size).assertEqual(0);
+      // The scene reservation is released too, so the scene becomes editable again.
+      await catalog.update('s', { name: '新实验室', latitude: 31, longitude: 121, radius: 100 });
+      expect((await catalog.findById('s'))?.name).assertEqual('新实验室');
+    });
+    it('reset_keeps_fences_when_the_registry_cannot_be_cleared', 0, async () => {
+      const platform = new FakePlatform();
+      const registry = new MemoryFenceRegistry();
+      const adapter = new LocationReminderAdapter(await makeCatalog(), platform, new RecordingSink(),
+        () => 100000, () => {}, alwaysReady, registry);
+      await adapter.register(reminder('r'));
+      registry.failRemove = true;
+      let failed: boolean = false;
+      try { await adapter.reset(); } catch (_) { failed = true; }
+      expect(failed).assertTrue();
+      // Fail closed: an unwritable registry must not leave fences without a claim.
+      expect(registry.entries.length).assertEqual(1);
+      expect(platform.callbacks.size).assertEqual(1);
+      registry.failRemove = false;
+      await adapter.reset();
+      expect(registry.entries.length).assertEqual(0);
+      expect(platform.callbacks.size).assertEqual(0);
+    });
+    it('rebuild_resets_before_requesting_permission', 0, async () => {
+      const platform = new FakePlatform();
+      const registry = new MemoryFenceRegistry();
+      const adapter = new LocationReminderAdapter(await makeCatalog(), platform, new RecordingSink(),
+        () => 100000, () => {}, alwaysReady, registry);
+      await adapter.register(reminder('r'));
+      platform.ready = false;
+      let failed: boolean = false;
+      try { await adapter.rebuild([reminder('r')]); } catch (_) { failed = true; }
+      expect(failed).assertTrue();
+      // The reset half succeeded; only re-registration needs permission.
+      expect(registry.entries.length).assertEqual(0);
+      expect(platform.callbacks.size).assertEqual(0);
+      platform.ready = true;
+      await adapter.rebuild([reminder('r')]);
+      expect(registry.entries.length).assertEqual(1);
+      expect(platform.callbacks.size).assertEqual(1);
+      await adapter.stop();
+    });
+    it('rebuild_reports_removal_failure_only_after_state_is_cleared', 0, async () => {
+      const platform = new FakePlatform();
+      const registry = new MemoryFenceRegistry();
+      const adapter = new LocationReminderAdapter(await makeCatalog(), platform, new RecordingSink(),
+        () => 100000, () => {}, alwaysReady, registry);
+      await adapter.register(reminder('r'));
+      platform.failRemove = true;
+      let code: string = '';
+      try { await adapter.reset(); } catch (error) { code = (error as Error).message; }
+      expect(code).assertEqual('REMOVE_FAILED');
+      expect(registry.entries.length).assertEqual(0);
+      // Unclaimed leftovers are cleaned by the next reset or by startup orphan recovery.
+      platform.failRemove = false;
+      await adapter.reset();
+      expect(platform.callbacks.size).assertEqual(0);
     });
   });
 }

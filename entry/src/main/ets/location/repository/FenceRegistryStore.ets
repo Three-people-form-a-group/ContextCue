@@ -4,19 +4,29 @@ import { FenceMapping, FenceRegistry } from '../platform/LocationPlatform';
 /**
  * Durable fence registry shared by the UI process and the fence extension process.
  *
- * Both processes live in the same hap, so they see the same filesDir. The file is written
- * atomically (temp file + fsync + rename) so a crash never leaves a half written document, and
- * every write failure is fail closed: the instance stops trusting its own state instead of
- * silently dropping a fence record.
+ * Both processes live in the same hap, so they see the same filesDir. Reads are lock free because
+ * the file is replaced with rename, so a reader always sees a complete document. Read-modify-write
+ * operations take a cross-process lock directory (`fence_registry.json.lock`, mkdir is atomic) so
+ * the main process and the fence extension cannot overwrite each other's updates; without it the
+ * last writer wins and either loses a delivered marker (duplicate notification) or loses a mapping
+ * (NOT_MAPPED). The writer still uses temp file + fsync + rename, and every write failure is fail
+ * closed: the instance stops trusting its own state instead of silently dropping a fence record.
  */
 export const FENCE_REGISTRY_FILE_NAME: string = 'fence_registry.json';
 export const FENCE_REGISTRY_VERSION: number = 1;
 
 /** Codes are documented in docs/location/error-codes.md. */
 export const FENCE_REGISTRY_WRITE_FAILED: string = 'FENCE_REGISTRY_WRITE_FAILED';
+export const FENCE_REGISTRY_BUSY: string = 'FENCE_REGISTRY_BUSY';
 export const FENCE_REGISTRY_REQUIRES_RECOVERY: string = 'FENCE_REGISTRY_REQUIRES_RECOVERY';
 export const FENCE_REGISTRY_CORRUPT: string = 'FENCE_REGISTRY_CORRUPT';
 export const FENCE_HANDLER_NOT_FOUND: string = 'FENCE_HANDLER_NOT_FOUND';
+
+/** A lock older than this is treated as a crashed process and removed. */
+const LOCK_STALE_MS: number = 5000;
+/** 80 * 25ms ≈ 2s, same budget as FileReminderRepository. */
+const LOCK_ATTEMPTS: number = 80;
+const LOCK_RETRY_MS: number = 25;
 
 interface FenceDocument {
   version: number;
@@ -186,6 +196,22 @@ export class FileFenceRegistry implements FenceRegistry {
     });
   }
 
+  /**
+   * Recovery entry: replace the document with an empty one.
+   *
+   * A corrupt or previously untrusted document must still be recoverable, so this deliberately
+   * skips read()/ensureTrusted() and starts from a clean file. Only a failed write leaves the
+   * instance untrusted again. Reminder data (reminders.json) is not touched.
+   */
+  clear(): Promise<void> {
+    return this.enqueue((): Promise<void> => {
+      return this.locked((): Promise<void> => {
+        this.uncertain = false;
+        return this.write([]);
+      });
+    });
+  }
+
   list(): Promise<FenceMapping[]> {
     return this.readOnly((mappings: FenceMapping[]): FenceMapping[] => {
       const result: FenceMapping[] = [];
@@ -198,16 +224,77 @@ export class FileFenceRegistry implements FenceRegistry {
 
   private mutate(change: (mappings: FenceMapping[]) => FenceMapping[]): Promise<void> {
     return this.enqueue((): Promise<void> => {
-      const current = this.read();
-      const next = change(current);
-      return this.write(next);
+      // Read and write must be one critical section across processes, otherwise the main process
+      // and the fence extension can each write back a version missing the other's change.
+      return this.locked((): Promise<void> => {
+        const current = this.read();
+        const next = change(current);
+        return this.write(next);
+      });
     });
   }
 
   private readOnly<T>(select: (mappings: FenceMapping[]) => T): Promise<T> {
+    // No lock: rename replacement guarantees a complete document, so readers never see a torn
+    // state and never block writers.
     return this.enqueue((): Promise<T> => {
       return Promise.resolve(select(this.read()));
     });
+  }
+
+  private async locked<T>(action: () => Promise<T>): Promise<T> {
+    await this.acquireLock();
+    try {
+      return await action();
+    } finally {
+      this.releaseLock();
+    }
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  private lockPath(): string {
+    return `${this.path}.lock`;
+  }
+
+  /**
+   * Cross-process mutual exclusion with a lock directory: mkdir is atomic "create if absent", which
+   * plain file OpenMode lacks. Contention is expected but short, so wait ~2s; a lock older than 5s
+   * is a dead process's leftover and is removed. On timeout nothing is mutated.
+   */
+  private async acquireLock(): Promise<void> {
+    const lockPath: string = this.lockPath();
+    for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt++) {
+      try {
+        fs.mkdirSync(lockPath);
+        return;
+      } catch (_) {
+        try {
+          const stat = fs.statSync(lockPath);
+          if (Date.now() - stat.mtime * 1000 > LOCK_STALE_MS) {
+            fs.rmdirSync(lockPath);
+            continue;
+          }
+        } catch (ignored) {
+          // The holder released between mkdir and stat; retry immediately.
+          continue;
+        }
+        await this.sleep(LOCK_RETRY_MS);
+      }
+    }
+    throw fail(FENCE_REGISTRY_BUSY);
+  }
+
+  private releaseLock(): void {
+    try {
+      fs.rmdirSync(this.lockPath());
+    } catch (ignored) {
+      // Already gone (stale cleanup by another process) or the directory never appeared.
+    }
   }
 
   private enqueue<T>(op: () => Promise<T>): Promise<T> {

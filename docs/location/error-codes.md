@@ -109,15 +109,28 @@ switch (error.code) {
 | 错误码 | 谁抛出的 | 含义 | 可重试 | UI 建议 |
 | --- | --- | --- | --- | --- |
 | `FENCE_REGISTRY_WRITE_FAILED` | `FileFenceRegistry` | 围栏与提醒的对应关系写不进磁盘（沙箱、空间、一次性写失败） | 是 | 提示“地点提醒记录保存失败，请稍后重试” |
+| `FENCE_REGISTRY_BUSY` | `FileFenceRegistry` | 约 2 秒内拿不到跨进程锁目录（另一进程正在读改写映射），本次操作未改动文件 | 是 | 提示“地点提醒记录正被其他进程占用，请稍后重试” |
 | `FENCE_REGISTRY_REQUIRES_RECOVERY` | `FileFenceRegistry` | 上一次读写失败后映射进入 `uncertain` 状态，为避免误删系统围栏而拒绝继续操作 | 是（但要求重启应用） | 提示“请重启应用后重试” |
 | `FENCE_REGISTRY_CORRUPT` | `FileFenceRegistry` | 映射文件损坏：版本号不符、字段缺失、fenceId/reminderId 重复 | 是（需重启后重建） | 提示“地点提醒记录已损坏，请重启应用后重试” |
-| `FENCE_HANDLER_NOT_FOUND` | `FileFenceRegistry.markDelivered()` / 扩展 | 按 fenceId 找不到映射条目，说明这条围栏已经没有归属 | 是（重新创建提醒） | 提示“地点围栏已失效，请重新创建提醒” |
+| `FENCE_HANDLER_NOT_FOUND` | `FileFenceRegistry.markDelivered()` / 扩展 | 按 fenceId 找不到映射条目，说明这条围栏已经没有归属 | 否（重试无法恢复映射，需重新创建提醒） | 提示“地点围栏已失效，请重新创建提醒”；若注册表整体损坏，用「重建地点提醒」 |
 
 要点：
 
-- 这三个 `FENCE_REGISTRY_*` 码是**fail closed**：写不进去就不假装注册成功。`register()` 里映射写失败会回滚刚建的围栏，所以用户看到这个错误时不会留下孤儿围栏。
+- 这几个 `FENCE_REGISTRY_*` 码是**fail closed**：写不进去就不假装注册成功。`register()` 里映射写失败会回滚刚建的围栏，所以用户看到这个错误时不会留下孤儿围栏。
+- `FENCE_REGISTRY_BUSY` 是瞬时冲突（跨进程锁 2 秒超时），操作在改动文件前就失败，重试即可；它不是文件损坏，不会让实例进入 `uncertain`。
 - `FENCE_REGISTRY_REQUIRES_RECOVERY` 和 `FENCE_REGISTRY_CORRUPT` 都不应该由 UI 自动重试，必须重启应用重新读一次文件。
 - 扩展进程里出现的 `FENCE_HANDLER_NOT_FOUND` 不会打扰用户（扩展只写日志，记成 `SKIPPED`），只有主进程的删除/对账路径才会把它抛给 UI。
+- `FENCE_HANDLER_NOT_FOUND` 标为不可重试：映射已经丢了，原地重试只会再次失败；让用户重新创建提醒（或走「重建地点提醒」）才是恢复路径。
+
+### 「重建地点提醒」（注册表损坏后的恢复）
+
+集成模式下 `AppServices.locationMaintenance` 暴露 `LocationMaintenance`（实现在 `LocationReminderAdapter`）：
+
+- `reset()`：清空 `fence_registry.json` 并移除本应用的全部系统围栏。**不检查定位权限**，因此权限状态异常时也能修复损坏的注册表；**不读写 `reminders.json`**。
+- `rebuild(reminders)`：先 `reset()`，再按当前仍有效的提醒重新注册围栏。重建阶段需要定位权限，权限不足时原样抛 `LOCATION_PERMISSION_DENIED` / `LOCATION_SWITCH_OFF`。
+- 先清持久文件、后删围栏；若映射文件写不进去（`FENCE_REGISTRY_WRITE_FAILED`），在删任何围栏之前就失败，状态保持一致。枚举/删除围栏失败时会继续清理其余项，最后把第一个错误抛给 UI，残留围栏会在下次启动按孤儿清理。
+
+UI 文案固定叫「重建地点提醒」，不要写成“清理提醒 / 删除提醒”，避免用户误以为会丢数据。
 
 ### 扩展进程的内部状态（不产生新错误码，写日志）
 
@@ -152,6 +165,8 @@ Tests run: 200, Failure: 0, Error: 0, Pass: 200
 
 覆盖情况：
 
-- `surfaces stable location registration codes with retry guidance`（ReminderService）：权限拒绝、定位关闭、围栏注册失败、设备不支持四种情况，断言错误码与 `retryable`；
+- `surfaces stable location registration codes with retry guidance`（ReminderService）：权限拒绝、定位关闭、围栏注册失败、设备不支持、`FENCE_HANDLER_NOT_FOUND` 五种情况，断言错误码与 `retryable`（最后一种必须不可重试）；
+- `renames_while_registered_or_referenced_without_touching_geometry`（SceneCatalog）：被引用/正在注册时允许改名，坐标/半径/`createdAt` 不变；
+- `reset_clears_registry_and_fences_without_location_permission` / `rebuild_resets_before_requesting_permission`（LocationAdapter）：重置不检查定位权限、重建先清后建，权限失败时只把重建这一步抛出来；
 - `rolls_back_the_fence_when_the_mapping_cannot_be_written`（LocationAdapter）：映射写失败必须原样抛出 `FENCE_REGISTRY_WRITE_FAILED` 并回滚围栏；
 - `fails_closed_when_the_reservation_cannot_be_written`（FenceExtension）：保留位写失败不弹通知。

@@ -45,6 +45,11 @@ export interface FenceRegistry {
   markDelivered(fenceId: number, at: number): Promise<void>;
   /** Releases a reservation after a failed publish so the next crossing may notify again. */
   clearDelivered(fenceId: number): Promise<void>;
+  /**
+   * Drops every durable mapping. This is the recovery entry for a corrupt/untrusted document, so it
+   * must not depend on the current file being readable. It never touches reminder data.
+   */
+  clear(): Promise<void>;
   list(): Promise<FenceMapping[]>;
 }
 

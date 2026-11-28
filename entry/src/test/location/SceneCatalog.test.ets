@@ -127,5 +127,37 @@ export default function sceneCatalogTest() {
       expect(failed).assertTrue();
       expect(storage.value).assertEqual(saved);
     });
+    it('renames_while_registered_or_referenced_without_touching_geometry', 0, async () => {
+      let referenced: boolean = false;
+      const storage = new MemoryTextStorage();
+      const catalog = new SceneCatalog(storage, () => 1000, () => 's', async () => referenced);
+      const created = await catalog.create({ name: '家', latitude: 31.2, longitude: 121.4, radius: 250 });
+      await catalog.acquire('s', 'r');
+      referenced = true;
+      const renamed = await catalog.rename('s', '  新家  ');
+      expect(renamed.name).assertEqual('新家');
+      expect(renamed.latitude).assertEqual(created.latitude);
+      expect(renamed.longitude).assertEqual(created.longitude);
+      expect(renamed.radius).assertEqual(created.radius);
+      expect(renamed.createdAt).assertEqual(created.createdAt);
+      await catalog.release('s', 'r');
+      const reopened = new SceneCatalog(storage, () => 2000, () => 'scene-2', async () => false);
+      expect((await reopened.findById('s'))?.name).assertEqual('新家');
+      expect((await reopened.resolveByName('新家')).status).assertEqual(SceneResolveStatus.RESOLVED);
+    });
+    it('rejects_rename_with_invalid_name_or_unknown_scene_and_keeps_data', 0, async () => {
+      const storage = new MemoryTextStorage();
+      const catalog = new SceneCatalog(storage, () => 1000, () => 's', async () => false);
+      await catalog.create({ name: '家', latitude: 31, longitude: 121, radius: 120 });
+      const saved = storage.value;
+      let failed: boolean = false;
+      try { await catalog.rename('s', '   '); } catch (_) { failed = true; }
+      expect(failed).assertTrue();
+      failed = false;
+      try { await catalog.rename('missing', '新家'); } catch (_) { failed = true; }
+      expect(failed).assertTrue();
+      expect((await catalog.findById('s'))?.name).assertEqual('家');
+      expect(storage.value).assertEqual(saved);
+    });
   });
 }

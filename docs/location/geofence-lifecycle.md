@@ -60,6 +60,7 @@ V1 只挂 `geofenceTransitionCallback`，这个回调运行在应用进程里。
 写入规则：
 
 - **原子写**：写临时文件 → `fsync` → `rename`，不会出现半个 JSON。
+- **跨进程锁**：所有“读—改—写”都先抢锁目录 `${filesDir}/fence_registry.json.lock`（`mkdirSync` 天生是“不存在才创建”的原子操作，`FileReminderRepository` 用同一套模式）。每隔 25ms 重试、最多约 2 秒；超过 5 秒的锁视为崩溃遗留并自动清理；仍拿不到则抛 `FENCE_REGISTRY_BUSY`（可重试），此时文件未被改动。读操作不抢锁：`rename` 保证读到的永远是完整版本。
 - **fail closed**：读失败或写失败后置 `uncertain`，后续操作抛 `FENCE_REGISTRY_REQUIRES_RECOVERY` / `FENCE_REGISTRY_WRITE_FAILED`，不猜文件内容（与 `PreferencesSceneStorage` 的 uncertain 处理同风格）。
 - **文档损坏**：抛 `FENCE_REGISTRY_CORRUPT`（版本号不对、字段缺失、fenceId/reminderId 重复）。
 - **写失败必须回滚**：`register()` 里 `addFence` 成功后先 `save` 映射，`save` 失败会删掉刚建的围栏并释放场景引用。
@@ -101,7 +102,7 @@ V1 只挂 `geofenceTransitionCallback`，这个回调运行在应用进程里。
 | --- | --- |
 | 围栏请求、持久映射、扩展进程门控与投递、启动对账 | 本模块（location） |
 | 提醒持久化仓储 `createPersistentReminderRepository(baseDir)` | 仓储负责人；本模块只在 [FenceReminderSource.ets](entry/src/main/ets/location/extension/FenceReminderSource.ets) 接一行 |
-| 通知点击路由（wantAgent） | 通知负责人；扩展当前发布的通知**没有**点击路由，只保证弹得出 |
+| 通知点击路由（wantAgent） | 本模块已给扩展通知挂 `wantAgent`（`EntryAbility` + `reminderId` 参数，requestCode 复用通知 ID）；主进程 `EntryAbility.onNewWant` 跳详情由提交 `0351cf5` 提供，合并后生效 |
 | 时间提醒对账、签名与 AGC 配置 | 不在本模块 |
 
 ## 八、验收口径

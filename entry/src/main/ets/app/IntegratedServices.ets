@@ -81,6 +81,8 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     config === undefined ? 'Fake(dev fixtures)' : 'Zhipu(GLM)');
   const adapter = locationAdapter;
   if (adapter !== undefined) {
+    // 「重建地点提醒」入口：先无权限依赖地清空映射/系统围栏，再按当前提醒重建。
+    services.locationMaintenance = adapter;
     // Startup accounting: keep fences whose reminder is still an ACTIVE location reminder, drop the
     // rest, and restore fences whose mapping was lost. Best effort; the next start retries.
     reconcileFences(adapter, services.reminderService).catch((error: Object): void => {

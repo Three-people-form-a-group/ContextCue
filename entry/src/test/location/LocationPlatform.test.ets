@@ -65,6 +65,7 @@ class RegistryStub implements FenceRegistry {
   }
   async markDelivered(fenceId: number, at: number): Promise<void> {}
   async clearDelivered(fenceId: number): Promise<void> {}
+  async clear(): Promise<void> { this.entries = []; }
   async list(): Promise<FenceMapping[]> { return this.entries; }
 }
 export default function locationPlatformTest() {

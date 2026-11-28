@@ -468,6 +468,15 @@ export default function reminderServiceTest() {
       result = await service.create(input);
       expect(result.error?.code).assertEqual('LOCATION_WGS84_FENCE_UNSUPPORTED');
       expect(result.error?.retryable).assertFalse();
+      location.registerError = 'FENCE_REGISTRY_BUSY';
+      result = await service.create(input);
+      expect(result.error?.code).assertEqual('FENCE_REGISTRY_BUSY');
+      expect(result.error?.retryable).assertTrue();
+      // Retrying cannot recreate a lost fence mapping; the user has to create the reminder again.
+      location.registerError = 'FENCE_HANDLER_NOT_FOUND';
+      result = await service.create(input);
+      expect(result.error?.code).assertEqual('FENCE_HANDLER_NOT_FOUND');
+      expect(result.error?.retryable).assertFalse();
       location.failRegister = false;
       expect((await service.create(input)).success).assertTrue();
     });

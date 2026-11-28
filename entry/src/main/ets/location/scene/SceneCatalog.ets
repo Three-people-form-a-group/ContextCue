@@ -20,10 +20,14 @@ interface SceneDocument {
 export const SCENE_MIN_RADIUS_METERS: number = 100;
 export const SCENE_MAX_RADIUS_METERS: number = 5000;
 
-function validateInput(input: SceneInput): void {
-  if (typeof input.name !== 'string' || input.name.trim().length === 0 || input.name.trim().length > 100) {
+function validateName(name: string): void {
+  if (typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 100) {
     throw new Error('SCENE_INVALID_NAME');
   }
+}
+
+function validateInput(input: SceneInput): void {
+  validateName(input.name);
   validateCoordinates(input.latitude, input.longitude);
   if (!Number.isFinite(input.radius) || input.radius < SCENE_MIN_RADIUS_METERS ||
     input.radius > SCENE_MAX_RADIUS_METERS) {
@@ -142,6 +146,26 @@ export class SceneCatalog implements SceneResolver {
       await this.requireMutable(id);
       const next: Scene = { id: id, name: draft.name.trim(), latitude: draft.latitude,
         longitude: draft.longitude, radius: draft.radius, createdAt: scenes[index].createdAt };
+      scenes[index] = next;
+      await this.save(scenes);
+      return copyScene(next);
+    });
+  }
+
+  /**
+   * Renames a scene without moving it. Unlike update(), this is allowed while the scene is used by
+   * reminders: coordinates, radius and createdAt stay untouched, so existing fences remain valid.
+   */
+  async rename(id: string, name: string): Promise<Scene> {
+    validateName(name);
+    const trimmed: string = name.trim();
+    return this.exclusive(async (): Promise<Scene> => {
+      const scenes = await this.load();
+      const index = scenes.findIndex((scene: Scene) => scene.id === id);
+      if (index < 0) { throw new Error('SCENE_NOT_FOUND'); }
+      const current = scenes[index];
+      const next: Scene = { id: current.id, name: trimmed, latitude: current.latitude,
+        longitude: current.longitude, radius: current.radius, createdAt: current.createdAt };
       scenes[index] = next;
       await this.save(scenes);
       return copyScene(next);

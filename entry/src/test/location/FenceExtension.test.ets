@@ -46,6 +46,7 @@ class FakeRegistry implements FenceRegistry {
     const entry = this.lookup(fenceId);
     if (entry !== undefined) { entry.lastDeliveredAt = undefined; }
   }
+  async clear(): Promise<void> { this.entries = []; }
   async list(): Promise<FenceMapping[]> { return this.entries; }
 }
 class FakeStore implements FenceReminderStore {

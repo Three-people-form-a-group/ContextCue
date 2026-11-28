@@ -12,6 +12,7 @@ import { TriggerConditionEvent } from '../reminder/contract/TriggerConditionEven
 import { TriggerEventSink } from '../reminder/contract/TriggerEventSink';
 import { TimetableService } from '../timetable/TimetableService';
 import { TimetableRepository } from '../timetable/repository/TimetableRepository';
+import { LocationMaintenance } from '../location/trigger/LocationMaintenance';
 
 export enum AppRuntimeMode {
   DEVELOPMENT = 'DEVELOPMENT',
@@ -25,6 +26,11 @@ export interface AppServices {
   readonly aiService: AIService;
   readonly timetableService: TimetableService;
   readonly mode: AppRuntimeMode;
+  /**
+   * 集成模式下的「重建地点提醒」入口；开发模式没有真实围栏，保持 undefined。
+   * 只清空围栏/持久映射并重建，不创建、不删除提醒。
+   */
+  locationMaintenance?: LocationMaintenance;
 }
 
 /** Integration-only configuration. Adapter factories must not emit events during construction. */

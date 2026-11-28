@@ -6,6 +6,7 @@ import { TriggerCondition, TriggerConditionEvent } from '../../reminder/contract
 import { distanceMeters, isWithinRadius } from '../geometry/LocationGeometry';
 import { FenceDelivery, FenceMapping, FenceRegistry, LocationPlatform } from '../platform/LocationPlatform';
 import { SceneCatalog } from '../scene/SceneCatalog';
+import { LocationMaintenance } from './LocationMaintenance';
 
 class Registration {
   reminderId: string;
@@ -71,7 +72,7 @@ function registrationFailure(error: Object | undefined): Error {
  * later process (or the fence extension) can answer "which reminder owns fence N" and so removal
  * still works after a restart, when the in-memory registrations are empty.
  */
-export class LocationReminderAdapter implements LocationTriggerPort {
+export class LocationReminderAdapter implements LocationTriggerPort, LocationMaintenance {
   private catalog: SceneCatalog;
   private platform: LocationPlatform;
   private sink: TriggerEventSink;
@@ -256,50 +257,109 @@ export class LocationReminderAdapter implements LocationTriggerPort {
   async reconcile(activeReminders: Reminder[]): Promise<void> {
     await this.exclusive(async (): Promise<void> => {
       await this.ensureReady();
-      const expected: Map<string, Reminder> = new Map<string, Reminder>();
-      for (let index = 0; index < activeReminders.length; index++) {
-        const reminder = activeReminders[index];
-        if (!isLocationRegistrationCandidate(reminder)) { continue; }
-        expected.set(reminder.id, snapshot(reminder));
-      }
-      const mappings = await this.registry.list();
-      for (let index = 0; index < mappings.length; index++) {
-        const mapping = mappings[index];
-        if (expected.has(mapping.reminderId)) { continue; }
-        try { await this.platform.removeFence(mapping.fenceId); }
-        catch (_) { /* Already removed by the system or by the extension. */ }
-        await this.registry.removeByReminder(mapping.reminderId);
-        const stale = this.registrations.get(mapping.reminderId);
-        if (stale !== undefined) {
-          this.registrations.delete(mapping.reminderId);
-          try { await this.catalog.release(stale.sceneId, mapping.reminderId); }
-          catch (_) { /* The reminder is gone; a leaked scene reference is not worth aborting. */ }
-        }
-      }
-      const ids = Array.from(expected.keys());
-      for (const id of ids) {
-        const reminder = expected.get(id);
-        if (reminder === undefined) { continue; }
-        const mapped = await this.registry.findByReminder(id);
-        const inMemory = this.registrations.get(id);
-        if (mapped !== undefined && (this.delivery !== undefined || inMemory !== undefined)) {
-          // The extension delivers, or this process still holds the callback.
-          continue;
-        }
-        if (mapped !== undefined) {
-          // In-process delivery needs a live callback, so the fence the dead process left is
-          // replaceable only by removing it first.
-          try { await this.platform.removeFence(mapped.fenceId); }
-          catch (_) { /* Recreate anyway; the old fence dies with the registry entry. */ }
-          await this.registry.removeByReminder(id);
-        }
-        try {
-          await this.registerLocked(reminder);
-        } catch (error) {
-          this.onError(errorCode(error).length > 0 ? errorCode(error) : 'LOCATION_FENCE_REGISTRATION_FAILED');
-        }
-      }
+      await this.reconcileLocked(activeReminders);
     });
+  }
+
+  /** Caller holds the gate. */
+  private async reconcileLocked(activeReminders: Reminder[]): Promise<void> {
+    const expected: Map<string, Reminder> = new Map<string, Reminder>();
+    for (let index = 0; index < activeReminders.length; index++) {
+      const reminder = activeReminders[index];
+      if (!isLocationRegistrationCandidate(reminder)) { continue; }
+      expected.set(reminder.id, snapshot(reminder));
+    }
+    const mappings = await this.registry.list();
+    for (let index = 0; index < mappings.length; index++) {
+      const mapping = mappings[index];
+      if (expected.has(mapping.reminderId)) { continue; }
+      try { await this.platform.removeFence(mapping.fenceId); }
+      catch (_) { /* Already removed by the system or by the extension. */ }
+      await this.registry.removeByReminder(mapping.reminderId);
+      const stale = this.registrations.get(mapping.reminderId);
+      if (stale !== undefined) {
+        this.registrations.delete(mapping.reminderId);
+        try { await this.catalog.release(stale.sceneId, mapping.reminderId); }
+        catch (_) { /* The reminder is gone; a leaked scene reference is not worth aborting. */ }
+      }
+    }
+    const ids = Array.from(expected.keys());
+    for (const id of ids) {
+      const reminder = expected.get(id);
+      if (reminder === undefined) { continue; }
+      const mapped = await this.registry.findByReminder(id);
+      const inMemory = this.registrations.get(id);
+      if (mapped !== undefined && (this.delivery !== undefined || inMemory !== undefined)) {
+        // The extension delivers, or this process still holds the callback.
+        continue;
+      }
+      if (mapped !== undefined) {
+        // In-process delivery needs a live callback, so the fence the dead process left is
+        // replaceable only by removing it first.
+        try { await this.platform.removeFence(mapped.fenceId); }
+        catch (_) { /* Recreate anyway; the old fence dies with the registry entry. */ }
+        await this.registry.removeByReminder(id);
+      }
+      try {
+        await this.registerLocked(reminder);
+      } catch (error) {
+        this.onError(errorCode(error).length > 0 ? errorCode(error) : 'LOCATION_FENCE_REGISTRATION_FAILED');
+      }
+    }
+  }
+
+  /**
+   * 用户触发的「重建地点提醒」：先做不依赖定位权限的重置（清空持久映射、移除本应用全部系统围栏），
+   * 再按当前提醒重建。reminders.json 不参与，提醒本身不会因此被删除或改写。
+   */
+  async rebuild(reminders: Reminder[]): Promise<void> {
+    await this.exclusive(async (): Promise<void> => {
+      await this.resetLocked();
+      // Re-registration genuinely needs location permission; the reset above already landed.
+      await this.ensureReady();
+      await this.reconcileLocked(reminders);
+    });
+  }
+
+  /** 只清空持久映射与系统围栏，不需要定位权限，也不修改提醒数据。 */
+  async reset(): Promise<void> {
+    await this.exclusive(async (): Promise<void> => {
+      await this.resetLocked();
+    });
+  }
+
+  /** Caller holds the gate. */
+  private async resetLocked(): Promise<void> {
+    // Enumerating fences is best effort: a broken permission state must not block the reset of a
+    // corrupt registry, otherwise the user can never recover from it.
+    let failure: Error | undefined = undefined;
+    let ids: number[] = [];
+    try { ids = await this.platform.activeFenceIds(); }
+    catch (error) {
+      failure = error instanceof Error ? error : new Error('LOCATION_FENCE_ENUMERATION_FAILED');
+    }
+    // Clear the durable file unconditionally; it is the part that cannot be repaired by retrying.
+    await this.registry.clear();
+    for (const id of ids) {
+      try { await this.platform.removeFence(id); }
+      catch (error) {
+        // Keep removing the rest; a leftover fence is unclaimed and gets cleaned as an orphan.
+        if (failure === undefined) {
+          failure = error instanceof Error ? error : new Error('LOCATION_FENCE_REMOVAL_FAILED');
+        }
+      }
+    }
+    const records = Array.from(this.registrations.values());
+    this.registrations.clear();
+    for (const registration of records) {
+      registration.active = false;
+      registration.pending = undefined;
+      if (registration.timer !== undefined) { clearTimeout(registration.timer); registration.timer = undefined; }
+      try { await this.catalog.release(registration.sceneId, registration.reminderId); }
+      catch (_) { /* Rebuild acquires the scene again; a stale pin does not block it. */ }
+    }
+    // Surface the first failure after the in-memory state is consistent, so a retry starts clean.
+    if (failure !== undefined) { throw failure; }
   }
 
   async isInsideScene(sceneId: string): Promise<boolean> {

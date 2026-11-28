@@ -166,3 +166,18 @@ WGS84 支持：是/否
 | 被杀后扩展日志有 `STORE_FAILED` / `FENCE_REMINDER_STORE_UNAVAILABLE` | 持久提醒仓储还没接线（见 [FenceReminderSource.ets](entry/src/main/ets/location/extension/FenceReminderSource.ets)） |
 | 弹出两条通知 | 说明回调与扩展同时投递；确认 `delivery` 是否真的传进了 `addFence`，以及两条通知 id 是否一致 |
 | 重启后提醒仍 `ACTIVE` | 扩展里 `store.save(TRIGGERED)` 失败；看 `STATE_UPDATE_FAILED` 日志 |
+
+## 七、待真机确认的问题（合并前补充）
+
+> 以下全部是**待验证**项，当前没有任何真机结论；不要在 UI 或文档里当成已成立的事实。
+
+| 问题 | 预期 | 观察点 |
+| --- | --- | --- |
+| 进程内 callback 与围栏扩展会不会同时投递 | 只会有一条通知：配了扩展时进程内 callback 故意空转，且两条路径共用同一通知 ID + 保留位 | 步骤 A/B 各走一次，数通知条数；看 hilog 是否同时出现协调器投递与 `ContextCue fence ... DELIVERED` |
+| 杀进程后进入围栏 | 扩展被系统拉起并投递，重启应用后提醒为 `TRIGGERED` | 步骤 B，重点确认扩展进程日志与 `fence_registry.json` 条目被清 |
+| `BOTH` 提醒：时间到达前 / 后进入围栏 | 时间未到：地点事件不投递（`SKIPPED`），到点后由时间侧投递一次；时间已过：进入围栏正常投递 | 各建一条 `BOTH` 提醒，分别在时间点前后跨越，确认只提醒一次 |
+| 重复进出围栏 | 提醒触发后围栏与映射被删，不再重复提醒；注销/重建后再次进入才会重新提醒 | 同一围栏多次进出，确认通知不累计、提醒状态只变一次 |
+| 关闭通知权限 | 进程存活：`NOTIFICATION_DISABLED`，提醒保持 `ACTIVE`；扩展路径放弃投递并写日志，不假装成功 | 系统设置关闭通知后重复步骤 A/B，核对错误码与提醒状态 |
+| 主进程对账与扩展进程同时写映射 | 跨进程锁目录生效：不丢 `lastDeliveredAt`（不重复弹）、不丢映射（不出现 `NOT_MAPPED`）；拿不到锁的一方得到可重试的 `FENCE_REGISTRY_BUSY`，文件保持不变 | 在扩展处理跨越的同时触发主进程 `reconcile`（或删除提醒），重复若干次后检查 `fence_registry.json` 是否两条更新都在；必要时临时在锁内加 sleep 放大窗口 |
+
+真机执行后把结果填进第五节，并把上面的“预期”替换成实测结论；在此之前对外沟通只能说“代码路径已就绪，待真机验证”。

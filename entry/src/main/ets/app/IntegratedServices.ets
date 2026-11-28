@@ -155,3 +155,24 @@ async function reconcileFences(adapter: LocationReminderAdapter, service: Remind
   if (!all.success || all.data === undefined) { return; }
   await adapter.reconcile(all.data);
 }
+async function syncActiveLocationRemindersForScene(service: ReminderService, sceneId: string): Promise<boolean> {
+  const all = await service.findAll();
+  if (!all.success || all.data === undefined) {
+    return false;
+  }
+  let synced: boolean = true;
+  for (let i = 0; i < all.data.length; i++) {
+    const reminder = all.data[i];
+    if (!isActiveLocationReminder(reminder) || reminder.sceneId !== sceneId) {
+      continue;
+    }
+    const result = await service.update(reminder.id, reminderInput(reminder));
+    if (!result.success) {
+      synced = false;
+      console.error('Scene geometry sync failed: ' +
+        (result.error === undefined ? 'UNKNOWN' : result.error.code));
+    }
+  }
+  return synced;
+}
+

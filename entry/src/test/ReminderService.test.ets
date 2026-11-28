@@ -242,6 +242,35 @@ export default function reminderServiceTest() {
       expect(repository.saves).assertEqual(savesAfterTrigger);
     });
 
+    it('renames scene snapshots for reminders referencing the scene (D2 cascade)', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      const service = new ReminderService(repository, time, new TestLocationPort(), () => 1000, () => 'r-n');
+      // 直接铺三条：两条引用 scene-1（旧名"实验室"），一条引用 scene-2
+      await repository.save({ id: 'a', content: '到实验室带电脑', triggerType: TriggerType.LOCATION, sceneId: 'scene-1', sceneName: '实验室', locationTriggerMode: LocationTriggerMode.ENTER, status: ReminderStatus.ACTIVE, source: ReminderSource.MANUAL, createdAt: 1000 });
+      await repository.save({ id: 'b', content: '到实验室交报告', triggerType: TriggerType.LOCATION, sceneId: 'scene-1', sceneName: '实验室', locationTriggerMode: LocationTriggerMode.ENTER, status: ReminderStatus.ACTIVE, source: ReminderSource.MANUAL, createdAt: 1000 });
+      await repository.save({ id: 'c', content: '到家休息', triggerType: TriggerType.LOCATION, sceneId: 'scene-2', sceneName: '家', locationTriggerMode: LocationTriggerMode.ENTER, status: ReminderStatus.ACTIVE, source: ReminderSource.MANUAL, createdAt: 1000 });
+      const result = await service.renameSceneReminders('scene-1', '实验室楼');
+      expect(result.success).assertTrue();
+      expect(result.data).assertEqual(2);
+      const a = await repository.findById('a');
+      const b = await repository.findById('b');
+      const c = await repository.findById('c');
+      expect(a?.sceneName).assertEqual('实验室楼');
+      expect(b?.sceneName).assertEqual('实验室楼');
+      expect(c?.sceneName).assertEqual('家');
+      // 改名只动显示快照，不触碰触发注册
+      expect(time.scheduled.length).assertEqual(0);
+    });
+    it('rejects empty scene names without touching reminders', 0, async () => {
+      const repository = new TestRepository();
+      const service = new ReminderService(repository, new TestTimePort(), new TestLocationPort(), () => 1000, () => 'r-m');
+      await repository.save({ id: 'a', content: '到实验室带电脑', triggerType: TriggerType.LOCATION, sceneId: 'scene-1', sceneName: '实验室', locationTriggerMode: LocationTriggerMode.ENTER, status: ReminderStatus.ACTIVE, source: ReminderSource.MANUAL, createdAt: 1000 });
+      const result = await service.renameSceneReminders('scene-1', '   ');
+      expect(result.success).assertFalse();
+      expect(result.error?.code).assertEqual('SCENE_NAME_EMPTY');
+      expect((await repository.findById('a'))?.sceneName).assertEqual('实验室');
+    });
     it('completes a triggered reminder then supports undo-complete back to ACTIVE', 0, async () => {
       const repository = new TestRepository();
       const service = new ReminderService(repository, new TestTimePort(), new TestLocationPort(), () => 3000, () => 'r-8');

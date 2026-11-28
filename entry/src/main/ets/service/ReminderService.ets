@@ -172,6 +172,45 @@ export class ReminderService {
     return this.serialize(id, () => this.transition(id, ReminderStatus.COMPLETED));
   }
 
+  /**
+   * 场景改名级联（D2 决策）：把引用该场景的所有提醒的 sceneName 快照更新为新名称。
+   * 只改展示快照，不触碰触发注册（围栏不依赖名称）；返回更新的提醒数量。
+   * 由 LocationSceneService.updateScene 在名称变化时调用。
+   */
+  async renameSceneReminders(sceneId: string, sceneName: string): Promise<OperationResult<number>> {
+    const trimmed = sceneName.trim();
+    if (trimmed.length === 0) {
+      return { success: false, error: serviceError('SCENE_NAME_EMPTY', '场景名称不能为空', false) };
+    }
+    let updated = 0;
+    const all = await this.repository.findAll();
+    for (let index = 0; index < all.length; index++) {
+      const reminder = all[index];
+      if (reminder.sceneId !== sceneId || reminder.sceneName === trimmed) { continue; }
+      await this.serialize<boolean>(reminder.id, async (): Promise<OperationResult<boolean>> => {
+        const current = await this.repository.findById(reminder.id);
+        if (current === undefined || current.sceneId !== sceneId || current.sceneName === trimmed) {
+          return { success: true, data: false };
+        }
+        const renamed: Reminder = {
+          id: current.id, content: current.content, triggerType: current.triggerType,
+          triggerTime: current.triggerTime, sceneId: current.sceneId, sceneName: trimmed,
+          locationTriggerMode: current.locationTriggerMode, status: current.status,
+          source: current.source, createdAt: current.createdAt,
+          triggeredAt: current.triggeredAt, completedAt: current.completedAt
+        };
+        try {
+          await this.repository.save(renamed);
+          updated++;
+          return { success: true, data: true };
+        } catch (_) {
+          return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒保存失败', true) };
+        }
+      });
+    }
+    return { success: true, data: updated };
+  }
+
   async markTriggered(id: string, occurredAt: number): Promise<OperationResult<Reminder>> {
     return this.serialize(id, () => this.markTriggeredInternal(id, occurredAt));
   }

@@ -58,7 +58,10 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   const platform = new HarmonyLocationPlatform(permissionManager);
   // Durable fenceId <-> reminderId registry, shared with the fence extension process.
   const fenceRegistry = createFileFenceRegistry(context.filesDir);
-  const sceneService = new LocationSceneService(catalog, platform, permissionManager);
+  const sceneService = new LocationSceneService(catalog, platform, permissionManager,
+    async (sceneId: string, sceneName: string): Promise<void> => {
+      await getAppServices().reminderService.renameSceneReminders(sceneId, sceneName);
+    });
   // 新进程启动时只清理"没有持久映射"的孤儿围栏；有映射的围栏保留给围栏扩展投递。
   platform.recoverOrphanFences(fenceRegistry).catch((): void => {});
 

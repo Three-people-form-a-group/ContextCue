@@ -26,11 +26,15 @@ export class LocationSceneService {
   private catalog: SceneCatalog;
   private platform: LocationPlatform;
   private permission: LocationPermissionManager;
+  /** 场景改名后把新名称级联到引用该场景的提醒（由组合根接线到 ReminderService）。 */
+  private renameCascade?: (sceneId: string, sceneName: string) => Promise<void>;
 
-  constructor(catalog: SceneCatalog, platform: LocationPlatform, permission: LocationPermissionManager) {
+  constructor(catalog: SceneCatalog, platform: LocationPlatform, permission: LocationPermissionManager,
+    renameCascade?: (sceneId: string, sceneName: string) => Promise<void>) {
     this.catalog = catalog;
     this.platform = platform;
     this.permission = permission;
+    this.renameCascade = renameCascade;
   }
 
   async list(): Promise<Scene[]> {
@@ -46,9 +50,11 @@ export class LocationSceneService {
     if (scene === undefined) {
       throw new Error('SCENE_NOT_FOUND');
     }
+    const nameChanged: boolean = scene.name.trim() !== name.trim();
     const radiusChanged: boolean = scene.radius !== radius;
+    let updatedScene: Scene;
     try {
-      return await this.catalog.update(id, {
+      updatedScene = await this.catalog.update(id, {
         name: name,
         latitude: scene.latitude,
         longitude: scene.longitude,
@@ -57,10 +63,16 @@ export class LocationSceneService {
     } catch (error) {
       const code: string = error instanceof Error ? error.message : String(error);
       if (code === 'SCENE_IN_USE' && !radiusChanged) {
-        return await this.catalog.rename(id, name);
+        updatedScene = await this.catalog.rename(id, name);
+      } else {
+        throw error as Error;
       }
-      throw error as Error;
     }
+    // D2 决策：场景改名级联到引用它的提醒快照（显示层）
+    if (nameChanged && this.renameCascade !== undefined) {
+      await this.renameCascade(id, name.trim());
+    }
+    return updatedScene;
   }
 
   /** 被提醒引用时 SceneCatalog 会抛 SCENE_IN_USE。 */

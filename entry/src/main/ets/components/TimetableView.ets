@@ -69,6 +69,8 @@ export struct TimetableView {
   @State editCourse: TimetableCourse = new TimetableCourse('', '', '', '', 1, '00:00', '00:00', [], 0);
   @State editIsNew: boolean = true;
   @State showImport: boolean = false;
+  /** 导入保存期间防止连点导致重复导入 */
+  private importingTimetable: boolean = false;
   /** 自定义作息（展示规则）；没有则按课程时间推导行 */
   @State scheduleModel: ScheduleModel | undefined = undefined;
   @State showCalibrator: boolean = false;
@@ -658,6 +660,11 @@ export struct TimetableView {
       });
       return;
     }
+    if (result.data !== undefined && result.data.reminders.failedCount > 0) {
+      this.getUIContext().getPromptAction().showToast({
+        message: `课程表已保存，${result.data.reminders.failedCount} 条上课提醒生成失败`
+      });
+    }
     RefreshSignal.bump();
     await this.loadTimetable();
   }
@@ -857,18 +864,34 @@ export struct TimetableView {
   }
 
   private async applyImported(draft: TimetableDraft): Promise<void> {
-    const result = await getAppServices().timetableService.saveTimetable(draft);
-    if (!result.success) {
-      this.getUIContext().getPromptAction().showToast({
-        message: result.error === undefined ? '导入失败' : result.error.message
-      });
+    if (this.importingTimetable) {
       return;
     }
-    RefreshSignal.bump();
-    this.selectedWeek = 1;
-    await this.loadTimetable();
-    const created: number = result.data === undefined ? 0 : result.data.reminders.createdCount;
-    this.getUIContext().getPromptAction().showToast({ message: `已导入，生成 ${created} 条上课提醒` });
+    this.importingTimetable = true;
+    try {
+      const result = await getAppServices().timetableService.saveTimetable(draft);
+      if (!result.success) {
+        // 保存失败时保留弹层和用户粘贴的内容，方便修改后重试
+        this.getUIContext().getPromptAction().showToast({
+          message: result.error === undefined ? '导入失败' : result.error.message
+        });
+        return;
+      }
+      this.showImport = false;
+      RefreshSignal.bump();
+      this.selectedWeek = 1;
+      await this.loadTimetable();
+      const reminders = result.data === undefined ? undefined : result.data.reminders;
+      const created: number = reminders === undefined ? 0 : reminders.createdCount;
+      const failed: number = reminders === undefined ? 0 : reminders.failedCount;
+      this.getUIContext().getPromptAction().showToast({
+        message: failed > 0
+          ? `已导入，生成 ${created} 条上课提醒，${failed} 条失败`
+          : `已导入，生成 ${created} 条上课提醒`
+      });
+    } finally {
+      this.importingTimetable = false;
+    }
   }
 
   private scrollToFirstCourse(): void {
@@ -1031,7 +1054,7 @@ export struct TimetableView {
       if (this.showImport) {
         TimetableImportSheet({
           onApply: (draft: TimetableDraft) => {
-            this.showImport = false;
+            // 保存成功后才关闭弹层；失败时保留用户已经粘贴的 JSON
             this.applyImported(draft);
           },
           onClose: () => {

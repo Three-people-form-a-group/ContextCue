@@ -5,6 +5,7 @@ import { PaperStore } from '../common/PaperStore';
 import { DraftStore } from '../common/DraftStore';
 import { RefreshSignal } from '../common/RefreshSignal';
 import { NotifyPref } from '../common/NotifyPref';
+import { getAppServices } from '../app/AppServiceRegistry';
 import { notificationManager } from '@kit.NotificationKit';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
@@ -34,6 +35,8 @@ struct Index {
   @StorageLink('uiMode') uiMode: string = UiMode.JOURNAL;
   /** 点击提醒通知时由 EntryAbility 写入；消费后清空 */
   @StorageLink('ccPendingReminderId') @Watch('onPendingReminder') pendingReminderId: string = '';
+  /** 防止启动/回前台连续触发补排 */
+  private ensuringTimetable: boolean = false;
 
   aboutToAppear(): void {
     // 读回上次选择的界面模式（极简 / 手账）
@@ -47,6 +50,27 @@ struct Index {
     setTimeout(() => {
       this.openPendingReminder();
     }, 0);
+  }
+
+  onPageShow(): void {
+    // 课程表提醒是滚动窗口；启动/回前台补排本周和下周，台账持久化后重复调用安全
+    this.ensureTimetableReminders();
+  }
+
+  private async ensureTimetableReminders(): Promise<void> {
+    if (this.ensuringTimetable) {
+      return;
+    }
+    this.ensuringTimetable = true;
+    try {
+      const result = await getAppServices().timetableService.ensureUpcomingReminders();
+      if (result.success && result.data !== undefined && result.data.createdCount > 0) {
+        RefreshSignal.bump();
+      }
+    } catch (_) {
+    } finally {
+      this.ensuringTimetable = false;
+    }
   }
 
   private onPendingReminder(): void {

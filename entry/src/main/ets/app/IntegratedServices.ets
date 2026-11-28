@@ -6,7 +6,7 @@ import { OhosAIChatClient } from '../ai/provider/OhosAIChatClient';
 import { ZhipuAIModelProvider } from '../ai/provider/ZhipuAIModelProvider';
 import { buildDevFixtures } from './DevelopmentServices';
 import { createFileReminderRepository } from '../repository/FileReminderRepository';
-import { InMemoryTimetableRepository } from '../timetable/repository/InMemoryTimetableRepository';
+import { createFileTimetableRepository } from '../timetable/repository/FileTimetableRepository';
 import { ReminderStatus, TriggerType } from '../model/ReminderEnums';
 import { ReminderService } from '../service/ReminderService';
 import { CreateReminderInput } from '../model/CreateReminderInput';
@@ -28,9 +28,9 @@ import { AppServices, AppRuntimeMode, createAppServices } from './AppServices';
 import { getAppServices } from './AppServiceRegistry';
 
 /**
- * 正式组装（INTEGRATED）：罗鸿程的系统时间/通知端口、文件持久化仓储、场景规则、
- * 几何传播与 LocationSceneService + 兰铮的定位适配器、场景目录与 V2 围栏扩展注册表。
- * 凭证经本地配置注入（见《真实AI接入准备》），缺失时 AI 仍为 Fake（开发样例可联调）。
+ * 正式组装（INTEGRATED）：罗鸿程的系统时间/通知端口、提醒与课表的文件持久化仓储、
+ * 场景规则、几何传播与 LocationSceneService + 兰铮的定位适配器、场景目录与
+ * V2 围栏扩展注册表。凭证经本地配置注入（见《真实AI接入准备》），缺失时 AI 仍为 Fake（开发样例可联调）。
  */
 export function createIntegratedServices(config: AIProviderConfig | undefined,
   context: common.UIAbilityContext): AppServices {
@@ -79,7 +79,8 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     mode: AppRuntimeMode.INTEGRATED,
     // 沙箱文件仓储：主进程与围栏扩展共用同一路径，进程重启后提醒仍在
     repository: createFileReminderRepository(context.filesDir),
-    timetableRepository: new InMemoryTimetableRepository(),
+    // 课表与“课表→提醒”台账放在同一份文件里，重启后仍能级联删除/避免重复生成
+    timetableRepository: createFileTimetableRepository(context.filesDir),
     createTimePort: (sink): TimeTriggerPort => {
       const port = createSystemTimePort(sink);
       timePorts.push(port);

@@ -664,7 +664,7 @@ export struct SettingsPage {
         })
         SettingValueRow({
           label: '数据保存',
-          desc: '提醒、界面、地点与 AI 配置会保留；课表在重启应用后清空',
+          desc: '提醒、课表、界面、地点与 AI 配置都会保留',
           value: '本机'
         })
       }

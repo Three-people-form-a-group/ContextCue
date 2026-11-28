@@ -42,7 +42,13 @@ export function reminderTypeText(r: Reminder): string {
 }
 
 export function reminderSourceText(r: Reminder): string {
-  return r.source === ReminderSource.AI ? 'AI 解析' : '手动创建';
+  if (r.source === ReminderSource.AI) {
+    return 'AI 解析';
+  }
+  if (r.source === ReminderSource.TIMETABLE) {
+    return '课表导入';
+  }
+  return '手动创建';
 }
 
 export function reminderStatusText(r: Reminder): string {

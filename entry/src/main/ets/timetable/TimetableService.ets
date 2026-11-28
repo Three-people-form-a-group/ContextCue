@@ -27,6 +27,8 @@ export class TimetableService {
   private repository: TimetableRepository;
   private reminderService: ReminderService;
   private now: () => number;
+  /** 启动补排和保存课表可能同时触发 ensure；串行化避免同一批提醒创建两次 */
+  private ensureGate: Promise<void> = Promise.resolve();
 
   constructor(repository: TimetableRepository, reminderService: ReminderService, now: () => number) {
     this.repository = repository;
@@ -95,15 +97,13 @@ export class TimetableService {
     }
     // 作息三态：undefined=沿用已存、null=清空、对象=替换
     let previous: StoredTimetable | undefined = undefined;
+    let previousOccurrences: OccurrenceRecord[] = [];
     try {
       previous = await this.repository.find();
+      previousOccurrences = previous === undefined ? [] : await this.repository.findOccurrences();
     } catch (_) {
       previous = undefined;
-    }
-    try {
-      await this.cascadeExisting();
-    } catch (_) {
-      return { success: false, error: serviceError('TIMETABLE_STORE_ERROR', '旧课程表清理失败', true) };
+      previousOccurrences = [];
     }
     const courses: StoredCourse[] = [];
     for (let i = 0; i < draft.courses.length; i++) {
@@ -135,13 +135,38 @@ export class TimetableService {
     if (resolvedSchedule !== undefined) {
       stored.schedule = resolvedSchedule;
     }
+    // 先写新课表（暂时保留旧台账），再删旧提醒，最后清台账。
+    // 这样即使写文件失败，旧课表/台账/提醒都还在；删除失败也可以重试。
+    const hadPrevious: boolean = previousOccurrences.length > 0;
     try {
-      await this.repository.save(stored, []);
+      await this.repository.save(stored, hadPrevious ? previousOccurrences : []);
     } catch (_) {
       return { success: false, error: serviceError('TIMETABLE_STORE_ERROR', '课程表保存失败', true) };
     }
+    if (hadPrevious) {
+      try {
+        await this.cascadeExisting();
+      } catch (_) {
+        return { success: false, error: serviceError('TIMETABLE_STORE_ERROR', '旧课程表清理失败', true) };
+      }
+      try {
+        await this.repository.save(stored, []);
+      } catch (_) {
+        return { success: false, error: serviceError('TIMETABLE_STORE_ERROR', '课程表保存失败', true) };
+      }
+    }
+    // 课表已经写入；提醒生成失败时也要返回结构完整的汇总，不能把 undefined 断言成对象
     const reminders = await this.ensureUpcomingReminders();
-    return { success: true, data: { timetable: stored, reminders: reminders.data as TimetableReminderSummary } };
+    const summary: TimetableReminderSummary = reminders.success && reminders.data !== undefined
+      ? reminders.data
+      : {
+        createdCount: 0,
+        skippedExistingCount: 0,
+        skippedPastCount: 0,
+        failedCount: 1,
+        failures: [reminders.error === undefined ? 'REMINDER_GENERATION_FAILED' : reminders.error.code]
+      };
+    return { success: true, data: { timetable: stored, reminders: summary } };
   }
 
   /**
@@ -149,6 +174,20 @@ export class TimetableService {
    * 应用启动/回到前台时由集成入口调用，保证滚动窗口内的提醒始终存在。
    */
   async ensureUpcomingReminders(): Promise<OperationResult<TimetableReminderSummary>> {
+    const previous = this.ensureGate;
+    let release: () => void = () => {};
+    this.ensureGate = new Promise<void>((resolve: () => void) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await this.ensureUpcomingRemindersInternal();
+    } finally {
+      release();
+    }
+  }
+
+  private async ensureUpcomingRemindersInternal(): Promise<OperationResult<TimetableReminderSummary>> {
     let stored: StoredTimetable | undefined;
     let occurrences: OccurrenceRecord[];
     try {
@@ -159,6 +198,30 @@ export class TimetableService {
     }
     if (stored === undefined) {
       return { success: false, error: serviceError('TIMETABLE_NOT_FOUND', '尚未导入课程表', false) };
+    }
+    // 提醒文件被单独清空时，台账会全部指向不存在的提醒。只有“全部失效”才重建台账，
+    // 避免把用户单独删除的某条上课提醒又复活。
+    if (occurrences.length > 0) {
+      try {
+        const all = await this.reminderService.findAll();
+        if (all.success && all.data !== undefined) {
+          const ids = new Set<string>();
+          for (let i = 0; i < all.data.length; i++) {
+            ids.add(all.data[i].id);
+          }
+          let missing: number = 0;
+          for (let i = 0; i < occurrences.length; i++) {
+            if (!ids.has(occurrences[i].reminderId)) {
+              missing++;
+            }
+          }
+          if (missing === occurrences.length) {
+            occurrences = [];
+            await this.repository.save(stored, []);
+          }
+        }
+      } catch (_) {
+      }
     }
     const summary: TimetableReminderSummary = {
       createdCount: 0, skippedExistingCount: 0, skippedPastCount: 0, failedCount: 0, failures: []
@@ -198,7 +261,7 @@ export class TimetableService {
             ? course.name : `${course.name} @ ${course.location.trim()}`,
           triggerType: TriggerType.TIME,
           triggerTime: triggerTime,
-          source: ReminderSource.MANUAL
+          source: ReminderSource.TIMETABLE
         };
         const created = await this.reminderService.create(input);
         if (created.success && created.data !== undefined) {
@@ -238,7 +301,10 @@ export class TimetableService {
     for (const occ of occurrences) {
       const loaded: OperationResult<Reminder> = await this.reminderService.findById(occ.reminderId);
       if (!loaded.success || loaded.data === undefined) {
-        summary.failedCount++;
+        // 已经不存在说明上一次删除已经生效；其他读取错误则保留课表，稍后重试
+        if (loaded.error === undefined || loaded.error.code !== 'REMINDER_NOT_FOUND') {
+          summary.failedCount++;
+        }
         continue;
       }
       const status: ReminderStatus = loaded.data.status;
@@ -252,6 +318,11 @@ export class TimetableService {
       } else {
         summary.failedCount++;
       }
+    }
+    if (summary.failedCount > 0) {
+      // 不能先清台账：失败的提醒会失去唯一线索，变成永远删不掉的孤儿
+      return { success: false, error: serviceError('TIMETABLE_DELETE_PARTIAL',
+        '部分上课提醒未能删除，请稍后重试', true) };
     }
     try {
       await this.repository.clear();
@@ -271,14 +342,22 @@ export class TimetableService {
     for (const occ of occurrences) {
       const loaded: OperationResult<Reminder> = await this.reminderService.findById(occ.reminderId);
       if (!loaded.success || loaded.data === undefined) {
-        continue;
+        if (loaded.error !== undefined && loaded.error.code === 'REMINDER_NOT_FOUND') {
+          continue;
+        }
+        // 读取失败时不要清台账；否则这条提醒会永远失去线索
+        throw new Error('TIMETABLE_CASCADE_READ_FAILED');
       }
       const status: ReminderStatus = loaded.data.status;
       if (status === ReminderStatus.TRIGGERED || status === ReminderStatus.COMPLETED) {
         continue;
       }
-      await this.reminderService.delete(occ.reminderId);
+      const deleted = await this.reminderService.delete(occ.reminderId);
+      if (!deleted.success) {
+        throw new Error('TIMETABLE_CASCADE_DELETE_FAILED');
+      }
     }
-    await this.repository.clear();
+    // 台账由 saveTimetable 在旧提醒全部删除后再清空；这里不能提前 clear，
+    // 否则删除失败时会失去唯一的提醒线索。
   }
 }

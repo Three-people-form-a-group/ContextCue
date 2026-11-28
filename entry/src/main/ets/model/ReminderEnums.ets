@@ -6,7 +6,8 @@ export enum TriggerType {
 
 export enum ReminderSource {
   MANUAL = 'MANUAL',
-  AI = 'AI'
+  AI = 'AI',
+  TIMETABLE = 'TIMETABLE'
 }
 
 export enum ReminderStatus {

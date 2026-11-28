@@ -77,7 +77,7 @@ export default function timetableServiceTest() {
       const all = await stack.reminderService.findAll();
       expect(all.data?.length).assertEqual(4);
     });
-    it('creates TIME reminders with classroom in content and manual source', 0, async () => {
+    it('creates TIME reminders with classroom in content and timetable source', 0, async () => {
       const stack = new Stack(new Date(2026, 9, 26, 7, 0).getTime());
       await stack.timetableService.saveTimetable(draft());
       const all = (await stack.reminderService.findAll()).data as Reminder[];
@@ -85,7 +85,7 @@ export default function timetableServiceTest() {
       const english = all.find((r: Reminder): boolean => r.triggerTime === ENGLISH_WEEK8);
       expect(math?.content).assertEqual('高等数学 @ 教三-401');
       expect(math?.triggerType).assertEqual(TriggerType.TIME);
-      expect(math?.source).assertEqual(ReminderSource.MANUAL);
+      expect(math?.source).assertEqual(ReminderSource.TIMETABLE);
       expect(math?.status).assertEqual(ReminderStatus.ACTIVE);
       expect(english?.content).assertEqual('大学英语');
       expect(english?.triggerTime).assertEqual(ENGLISH_WEEK8);

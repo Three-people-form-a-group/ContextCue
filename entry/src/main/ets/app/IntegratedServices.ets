@@ -10,6 +10,7 @@ import { InMemoryTimetableRepository } from '../timetable/repository/InMemoryTim
 import { ReminderStatus, TriggerType } from '../model/ReminderEnums';
 import { ReminderService } from '../service/ReminderService';
 import { CreateReminderInput } from '../model/CreateReminderInput';
+import { Reminder } from '../model/Reminder';
 import { SceneCatalog } from '../location/scene/SceneCatalog';
 import { LocationSceneService } from '../location/scene/LocationSceneService';
 import { createPreferencesSceneStorage } from '../location/repository/PreferencesSceneStorage';
@@ -27,8 +28,8 @@ import { AppServices, AppRuntimeMode, createAppServices } from './AppServices';
 import { getAppServices } from './AppServiceRegistry';
 
 /**
- * 正式组装（INTEGRATED）：罗鸿程的系统时间/通知端口、文件持久化仓储、场景规则与
- * LocationSceneService + 兰铮的定位适配器、场景目录与 V2 围栏扩展注册表。
+ * 正式组装（INTEGRATED）：罗鸿程的系统时间/通知端口、文件持久化仓储、场景规则、
+ * 几何传播与 LocationSceneService + 兰铮的定位适配器、场景目录与 V2 围栏扩展注册表。
  * 凭证经本地配置注入（见《真实AI接入准备》），缺失时 AI 仍为 Fake（开发样例可联调）。
  */
 export function createIntegratedServices(config: AIProviderConfig | undefined,
@@ -40,7 +41,8 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   const catalog = new SceneCatalog(createPreferencesSceneStorage(context), now, newId,
     async (sceneId: string): Promise<boolean> => {
       const all = await getAppServices().reminderService.findAll();
-      if (!all.success || all.data === undefined) { return false; }
+      // 读不到引用关系时按"仍被引用"处理，宁可拒绝改名/删除，也不要留下悬空围栏
+      if (!all.success || all.data === undefined) { return true; }
       let found: boolean = false;
       for (let i = 0; i < all.data.length; i++) {
         const reminder = all.data[i];
@@ -111,6 +113,10 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
       console.error('Location reconcile error: ' + String(error));
     });
   }
+  // 场景半径/坐标变化后，把该场景下 ACTIVE 的地点提醒重新注册到新围栏
+  sceneService.setGeometrySync(async (sceneId: string): Promise<boolean> => {
+    return await syncActiveLocationRemindersForScene(services.reminderService, sceneId);
+  });
   const port: ReminderAgentTimePort | undefined = timePorts.length > 0 ? timePorts[0] : undefined;
   if (port !== undefined) {
     // 启动对账：取消无效/重复的系统时间提醒，补排 ACTIVE，并恢复业务 id → 系统 id 的映射。
@@ -124,6 +130,24 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
     });
   }
   return services;
+}
+
+function reminderInput(reminder: Reminder): CreateReminderInput {
+  return {
+    content: reminder.content,
+    triggerType: reminder.triggerType,
+    triggerTime: reminder.triggerTime,
+    sceneId: reminder.sceneId,
+    sceneName: reminder.sceneName,
+    locationTriggerMode: reminder.locationTriggerMode,
+    source: reminder.source
+  };
+}
+
+function isActiveLocationReminder(reminder: Reminder): boolean {
+  return reminder.status === ReminderStatus.ACTIVE &&
+    (reminder.triggerType === TriggerType.LOCATION || reminder.triggerType === TriggerType.BOTH) &&
+    reminder.sceneId !== undefined && reminder.sceneId.trim() !== '';
 }
 
 async function reconcileFences(adapter: LocationReminderAdapter, service: ReminderService): Promise<void> {

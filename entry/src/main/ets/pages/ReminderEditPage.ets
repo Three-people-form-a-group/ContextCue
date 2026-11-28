@@ -9,7 +9,7 @@ import { Reminder } from '../model/Reminder';
 import { CreateReminderInput } from '../model/CreateReminderInput';
 import { Scene } from '../model/Scene';
 import { ReminderStatus } from '../model/ReminderEnums';
-import { LocationSceneService, SceneLocationState } from '../location/scene/LocationSceneService';
+import { LocationSceneService, SceneLocationState, SceneUpdateResult } from '../location/scene/LocationSceneService';
 import { SCENE_MAX_RADIUS_METERS, SCENE_MIN_RADIUS_METERS } from '../location/scene/SceneCatalog';
 import { DraftStore, ReminderDraft } from '../common/DraftStore';
 import { parseTimeInput, TimeParseResult } from '../common/UiTimeInputParser';
@@ -1141,9 +1141,10 @@ export struct ReminderEditPage {
     this.sceneBusy = true;
     this.sceneError = '';
     try {
-      const scene: Scene = await service.updateScene(this.sceneEditingId, name, radius);
+      const outcome: SceneUpdateResult = await service.updateScene(this.sceneEditingId, name, radius);
+      const scene: Scene = outcome.scene;
       // 改名后同步仍在使用该地点的提醒，避免详情页显示旧名称
-      const synced: boolean = await this.cascadeSceneName(scene.id, scene.name);
+      const nameSynced: boolean = await this.cascadeSceneName(scene.id, scene.name);
       try {
         this.scenes = await service.list();
       } catch (_) {
@@ -1153,14 +1154,12 @@ export struct ReminderEditPage {
       }
       this.closeSceneEditor();
       this.saveError = '';
+      const synced: boolean = outcome.remindersSynced && nameSynced;
       this.getUIContext().getPromptAction().showToast({
-        message: synced ? '已修改地点' : '地点已改名，部分提醒未能同步'
+        message: synced ? '已修改地点' : '地点已更新，部分提醒未能同步'
       });
     } catch (error) {
-      const code: string = error instanceof Error ? error.message : String(error);
-      this.sceneError = code === 'SCENE_IN_USE'
-        ? '这个地点还被提醒使用：可以改名，改范围需要先处理相关提醒'
-        : this.sceneMutationErrorMessage(error);
+      this.sceneError = this.sceneMutationErrorMessage(error);
     } finally {
       this.sceneBusy = false;
     }

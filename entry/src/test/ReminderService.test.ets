@@ -167,7 +167,7 @@ export default function reminderServiceTest() {
       expect(location.registered.length).assertEqual(0);
     });
 
-    it('compensates a partial BOTH registration failure without a record', 0, async () => {
+    it('keeps a BOTH reminder when location registration fails and carries the warning', 0, async () => {
       const repository = new TestRepository();
       const time = new TestTimePort();
       const location = new TestLocationPort();
@@ -175,11 +175,48 @@ export default function reminderServiceTest() {
       const service = new ReminderService(repository, time, location, () => 1000, () => 'r-4');
       const input: CreateReminderInput = { content: '带电脑', triggerType: TriggerType.BOTH, triggerTime: 2000, sceneId: 'scene-1', source: ReminderSource.MANUAL };
       const result = await service.create(input);
-      expect(result.success).assertFalse();
-      expect(result.error?.code).assertEqual('TRIGGER_REGISTRATION_ERROR');
-      expect(repository.saves).assertEqual(0);
-      expect(time.cancelled[0]).assertEqual('r-4');
-      expect(await repository.findById('r-4')).assertUndefined();
+      // 创建与投递分离：地点注册失败不回滚创建，提醒照常入库，警告随结果返回
+      expect(result.success).assertTrue();
+      expect(result.warnings?.length).assertEqual(1);
+      expect(result.warnings?.[0].code).assertEqual('TRIGGER_REGISTRATION_ERROR');
+      expect(repository.saves).assertEqual(1);
+      expect(time.scheduled.length).assertEqual(1);
+      expect(time.cancelled.length).assertEqual(0);
+      expect((await repository.findById('r-4'))?.content).assertEqual('带电脑');
+    });
+
+    it('keeps a time reminder when the time port fails and carries the warning', 0, async () => {
+      const repository = new TestRepository();
+      const time = new TestTimePort();
+      time.failSchedule = true;
+      const service = new ReminderService(repository, time, new TestLocationPort(), () => 1000, () => 'r-time-warn');
+      const result = await service.create(timeInput());
+      expect(result.success).assertTrue();
+      expect(result.warnings?.length).assertEqual(1);
+      expect(result.warnings?.[0].code).assertEqual('TIME_SCHEDULE_FAILED');
+      expect(result.warnings?.[0].retryable).assertTrue();
+      expect((await repository.findById('r-time-warn'))?.content).assertEqual('带电脑');
+      // 通知授权恢复后（failSchedule=false），禁用→重新启用走注册成功路径，无警告
+      time.failSchedule = false;
+      await service.disable('r-time-warn');
+      const enabled = await service.enable('r-time-warn');
+      expect(enabled.success).assertTrue();
+      expect(enabled.warnings).assertUndefined();
+      expect(time.scheduled.length).assertEqual(1);
+    });
+
+    it('re-enables with a warning when location registration fails instead of rejecting', 0, async () => {
+      const repository = new TestRepository();
+      const location = new TestLocationPort();
+      const service = new ReminderService(repository, new TestTimePort(), location, () => 1000, () => 'r-enable-warn');
+      await service.create({ content: '取快递', triggerType: TriggerType.LOCATION, sceneId: 'scene-1', source: ReminderSource.MANUAL });
+      await service.disable('r-enable-warn');
+      location.failRegister = true;
+      const enabled = await service.enable('r-enable-warn');
+      expect(enabled.success).assertTrue();
+      expect(enabled.warnings?.length).assertEqual(1);
+      expect(enabled.warnings?.[0].code).assertEqual('TRIGGER_REGISTRATION_ERROR');
+      expect((await repository.findById('r-enable-warn'))?.status).assertEqual(ReminderStatus.ACTIVE);
     });
 
     it('compensates both triggers when final repository save fails', 0, async () => {
@@ -456,7 +493,7 @@ export default function reminderServiceTest() {
       expect((await repository.findById('r-fail'))?.status).assertEqual(ReminderStatus.DISABLED);
     });
 
-    it('keeps old data when replacement registration or deletion cleanup fails', 0, async () => {
+    it('keeps the edited reminder when replacement registration fails and carries the warning', 0, async () => {
       const repository = new TestRepository();
       const time = new TestTimePort();
       const location = new TestLocationPort();
@@ -464,41 +501,48 @@ export default function reminderServiceTest() {
       await service.create(timeInput());
       location.failRegister = true;
       const next: CreateReminderInput = { content: '新提醒', triggerType: TriggerType.LOCATION, sceneId: 'scene-1', source: ReminderSource.AI };
-      expect((await service.update('r-fail-2', next)).error?.code).assertEqual('TRIGGER_REGISTRATION_ERROR');
-      expect((await repository.findById('r-fail-2'))?.content).assertEqual('带电脑');
-      expect(time.scheduled.length).assertEqual(2);
+      const edited = await service.update('r-fail-2', next);
+      // 编辑与投递分离：新触发条件注册失败不回滚编辑，新内容照常入库并带警告
+      expect(edited.success).assertTrue();
+      expect(edited.warnings?.length).assertEqual(1);
+      expect(edited.warnings?.[0].code).assertEqual('TRIGGER_REGISTRATION_ERROR');
+      expect((await repository.findById('r-fail-2'))?.content).assertEqual('新提醒');
+      expect(time.scheduled.length).assertEqual(1);
+      expect(time.cancelled.length).assertEqual(1);
       time.failCancel = true;
       const deleted = await service.delete('r-fail-2');
       expect(deleted.error?.code).assertEqual('TRIGGER_CLEANUP_ERROR');
       expect((await repository.findById('r-fail-2'))?.status).assertEqual(ReminderStatus.ACTIVE);
     });
 
-    it('surfaces stable location registration codes with retry guidance', 0, async () => {
+    it('surfaces stable location registration codes as warnings with retry guidance', 0, async () => {
       const repository = new TestRepository();
       const time = new TestTimePort();
       const location = new TestLocationPort();
-      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-loc-code');
+      let seq: number = 0;
+      const service = new ReminderService(repository, time, location, () => 1000, () => 'r-loc-' + (++seq));
       const input: CreateReminderInput = { content: '带电脑', triggerType: TriggerType.LOCATION,
         sceneId: 'scene-1', source: ReminderSource.MANUAL };
       location.failRegister = true;
       location.registerError = 'LOCATION_PERMISSION_DENIED';
       let result = await service.create(input);
-      expect(result.error?.code).assertEqual('LOCATION_PERMISSION_DENIED');
-      expect(result.error?.retryable).assertFalse();
+      expect(result.success).assertTrue();
+      expect(result.warnings?.[0].code).assertEqual('LOCATION_PERMISSION_DENIED');
+      expect(result.warnings?.[0].retryable).assertFalse();
       location.registerError = 'LOCATION_SWITCH_OFF';
       result = await service.create(input);
-      expect(result.error?.code).assertEqual('LOCATION_SWITCH_OFF');
-      expect(result.error?.retryable).assertTrue();
+      expect(result.warnings?.[0].code).assertEqual('LOCATION_SWITCH_OFF');
+      expect(result.warnings?.[0].retryable).assertTrue();
       location.registerError = 'LOCATION_FENCE_REGISTRATION_FAILED';
       result = await service.create(input);
-      expect(result.error?.code).assertEqual('LOCATION_FENCE_REGISTRATION_FAILED');
-      expect(result.error?.retryable).assertTrue();
+      expect(result.warnings?.[0].code).assertEqual('LOCATION_FENCE_REGISTRATION_FAILED');
+      expect(result.warnings?.[0].retryable).assertTrue();
       location.registerError = 'LOCATION_WGS84_FENCE_UNSUPPORTED';
       result = await service.create(input);
-      expect(result.error?.code).assertEqual('LOCATION_WGS84_FENCE_UNSUPPORTED');
-      expect(result.error?.retryable).assertFalse();
+      expect(result.warnings?.[0].code).assertEqual('LOCATION_WGS84_FENCE_UNSUPPORTED');
+      expect(result.warnings?.[0].retryable).assertFalse();
       location.failRegister = false;
-      expect((await service.create(input)).success).assertTrue();
+      expect((await service.create(input)).warnings).assertUndefined();
     });
 
     it('repeated terminal-state actions leave repository and ports unchanged', 0, async () => {

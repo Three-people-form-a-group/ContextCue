@@ -2,6 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { initializeAppServices } from '../app/AppBootstrap';
+import { reconcileOnAppForeground } from '../app/IntegratedServices';
 import { readLocalAIProviderConfig } from '../ai/provider/LocalAIConfigReader';
 
 const DOMAIN = 0x0000;
@@ -65,6 +66,9 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     // Ability has brought to foreground
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    // 回前台对账：用户可能刚在系统设置里打开通知授权，或围栏/排期状态有变化；
+    // 投递分离后注册失败的提醒也在这里补排（INTEGRATED 模式，开发模式为空操作）
+    reconcileOnAppForeground();
   }
 
   onBackground(): void {

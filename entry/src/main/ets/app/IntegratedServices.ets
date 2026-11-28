@@ -32,6 +32,23 @@ import { getAppServices } from './AppServiceRegistry';
  * 场景规则、几何传播与 LocationSceneService + 兰铮的定位适配器、场景目录与
  * V2 围栏扩展注册表。凭证经本地配置注入（见《真实AI接入准备》），缺失时 AI 仍为 Fake（开发样例可联调）。
  */
+
+/** 回前台对账的当前实现；仅 INTEGRATED 组装时设置，开发模式保持 undefined。 */
+let foregroundReconcile: (() => Promise<void>) | undefined = undefined;
+
+/**
+ * 回前台对账（EntryAbility.onForeground 调用）：用户可能刚在系统设置里打开通知授权，
+ * 或定位/围栏状态有变化。把 ACTIVE 提醒的触发器与系统侧对齐：补排缺失、清理无效。
+ * 投递分离后，注册失败入库的提醒也靠这里补排。失败仅记日志，下次回前台重试。
+ */
+export function reconcileOnAppForeground(): void {
+  const reconcile = foregroundReconcile;
+  if (reconcile === undefined) { return; }
+  reconcile().catch((error: Object): void => {
+    console.error('Foreground reconcile error: ' + String(error));
+  });
+}
+
 export function createIntegratedServices(config: AIProviderConfig | undefined,
   context: common.UIAbilityContext): AppServices {
   const now = (): number => Date.now();
@@ -130,6 +147,20 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
       console.error('Time reconcile error: ' + String(error));
     });
   }
+  foregroundReconcile = async (): Promise<void> => {
+    const current = getAppServices();
+    if (current === undefined) { return; }
+    const all = await current.reminderService.findAll();
+    if (!all.success || all.data === undefined) { return; }
+    const reconcileAdapter = locationAdapter;
+    if (reconcileAdapter !== undefined) {
+      await reconcileAdapter.reconcile(all.data);
+    }
+    const reconcilePort = timePorts.length > 0 ? timePorts[0] : undefined;
+    if (reconcilePort !== undefined) {
+      await reconcilePort.reconcile(all.data);
+    }
+  };
   return services;
 }
 

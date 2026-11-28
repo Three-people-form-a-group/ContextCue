@@ -53,6 +53,14 @@ function registrationError(error: Object | undefined): OperationError {
   return serviceError('TRIGGER_REGISTRATION_ERROR', '触发条件注册失败', true);
 }
 
+/**
+ * 时间端口注册失败（最常见：系统通知授权不可用）作为 warning 而不是失败返回：
+ * 提醒已保存，启动/回前台对账会在通知可用后自动补排。
+ */
+function timeScheduleWarning(): OperationError {
+  return serviceError('TIME_SCHEDULE_FAILED', '系统通知暂不可用，提醒已保存，开启通知后自动恢复', true);
+}
+
 function usesTime(reminder: Reminder): boolean {
   return reminder.triggerType === TriggerType.TIME || reminder.triggerType === TriggerType.BOTH;
 }
@@ -124,16 +132,15 @@ export class ReminderService {
       return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒 ID 检查失败', true) };
     }
 
-    try {
-      await this.register(reminder);
-    } catch (error) {
-      await this.cleanup(reminder);
-      return { success: false, error: registrationError(error) };
-    }
+    // 创建与投递分离：注册失败不回滚创建，提醒照常入库并带 warning 返回，
+    // 由启动/回前台对账在条件恢复后补排（2026-11-28 通知授权自愈闭环）。
+    const warnings: OperationError[] = [];
+    await this.registerCollecting(reminder, warnings);
 
     try {
       await this.repository.save(reminder);
-      return { success: true, data: reminder };
+      return warnings.length > 0 ? { success: true, data: reminder, warnings: warnings }
+        : { success: true, data: reminder };
     } catch (_) {
       await this.cleanup(reminder);
       return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒保存失败', true) };
@@ -310,27 +317,22 @@ export class ReminderService {
       completedAt: current.completedAt
     };
 
+    let updateWarnings: OperationError[] = [];
     if (current.status === ReminderStatus.ACTIVE) {
       if (!(await this.cleanupAll(current))) {
         await this.restore(current);
         return { success: false, error: serviceError('TRIGGER_CLEANUP_ERROR', '旧触发器清理失败', true) };
       }
-      try {
-        await this.register(next);
-      } catch (error) {
-        await this.cleanup(next);
-        await this.restore(current);
-        const failure = registrationError(error);
-        // 稳定码的文案已经面向用户，不要再套“注册失败”这种开发口吻
-        return { success: false, error: { code: failure.code,
-          message: failure.code === 'TRIGGER_REGISTRATION_ERROR' ? '新触发条件注册失败：' + failure.message : failure.message,
-          retryable: failure.retryable } };
-      }
+      // 编辑与投递分离：新触发条件注册失败不回滚编辑，新内容照常入库并带 warning，
+      // 由启动/回前台对账在条件恢复后补排
+      updateWarnings = [];
+      await this.registerCollecting(next, updateWarnings);
     }
 
     try {
       await this.repository.save(next);
-      return { success: true, data: next };
+      return updateWarnings.length > 0 ? { success: true, data: next, warnings: updateWarnings }
+        : { success: true, data: next };
     } catch (_) {
       if (current.status === ReminderStatus.ACTIVE) {
         await this.cleanup(next);
@@ -396,15 +398,13 @@ export class ReminderService {
         return { success: false, error: validation[0] };
       }
       const active = withStatus(current, ReminderStatus.ACTIVE);
-      try {
-        await this.register(active);
-      } catch (error) {
-        await this.cleanup(active);
-        return { success: false, error: registrationError(error) };
-      }
+      // 重新启用同样遵循创建与投递分离：注册失败带 warning 入库，对账补排
+      const enableWarnings: OperationError[] = [];
+      await this.registerCollecting(active, enableWarnings);
       try {
         await this.repository.save(active);
-        return { success: true, data: active };
+        return enableWarnings.length > 0 ? { success: true, data: active, warnings: enableWarnings }
+          : { success: true, data: active };
       } catch (_) {
         await this.cleanup(active);
         return { success: false, error: serviceError('REPOSITORY_ERROR', '提醒状态保存失败', true) };
@@ -463,6 +463,28 @@ export class ReminderService {
     }
     if (usesLocation(reminder)) {
       await this.locationPort.register(reminder);
+    }
+  }
+
+  /**
+   * 注册并把每个端口的失败收集为 warning（而不是抛出）。
+   * 两个端口独立尝试：时间失败不影响地点注册，反之亦然。
+   * 仅用于创建/编辑/重新启用；restore 保持注册失败即抛出的旧语义。
+   */
+  private async registerCollecting(reminder: Reminder, warnings: OperationError[]): Promise<void> {
+    if (usesTime(reminder)) {
+      try {
+        await this.timePort.schedule(reminder);
+      } catch (_) {
+        warnings.push(timeScheduleWarning());
+      }
+    }
+    if (usesLocation(reminder)) {
+      try {
+        await this.locationPort.register(reminder);
+      } catch (error) {
+        warnings.push(registrationError(error));
+      }
     }
   }
 

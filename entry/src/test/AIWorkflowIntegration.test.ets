@@ -185,16 +185,18 @@ export default function aiWorkflowIntegrationTest() {
       expect((await malformed.repository.findAll()).length).assertEqual(0);
     });
 
-    it('compensates time registration if AI BOTH location registration fails', 0, async () => {
+    it('keeps AI BOTH reminder when location registration fails and carries the warning', 0, async () => {
       const w = new Workflow('{"content":"带电脑","triggerType":"BOTH","triggerTime":"1970-01-01T08:00:02+08:00","sceneName":"实验室","ambiguous":false}');
       const parsed = await w.parse();
       if (parsed.draft === undefined) { throw new Error('Expected draft'); }
       w.location.failRegister = true;
       const created = await w.service.create(parsed.draft);
-      expect(created.success).assertFalse();
-      expect(created.error?.code).assertEqual('TRIGGER_REGISTRATION_ERROR');
-      expect(w.time.cancelled[0]).assertEqual('ai-1');
-      expect((await w.repository.findAll()).length).assertEqual(0);
+      // 创建与投递分离：地点注册失败不回滚 AI 创建，时间触发保持，警告随结果返回
+      expect(created.success).assertTrue();
+      expect(created.warnings?.length).assertEqual(1);
+      expect(created.warnings?.[0].code).assertEqual('TRIGGER_REGISTRATION_ERROR');
+      expect(w.time.scheduled.length).assertEqual(1);
+      expect((await w.repository.findAll()).length).assertEqual(1);
     });
 
     it('retains ACTIVE after delivery failure then retries without duplicate success', 0, async () => {

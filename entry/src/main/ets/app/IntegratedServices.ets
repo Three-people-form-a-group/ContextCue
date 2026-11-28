@@ -9,6 +9,7 @@ import { InMemoryTimetableRepository } from '../timetable/repository/InMemoryTim
 import { ReminderStatus, TriggerType } from '../model/ReminderEnums';
 import { ReminderService } from '../service/ReminderService';
 import { CreateReminderInput } from '../model/CreateReminderInput';
+import { Reminder } from '../model/Reminder';
 import { SceneCatalog } from '../location/scene/SceneCatalog';
 import { LocationSceneService } from '../location/scene/LocationSceneService';
 import { createPreferencesSceneStorage } from '../location/repository/PreferencesSceneStorage';
@@ -40,7 +41,8 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   const catalog = new SceneCatalog(createPreferencesSceneStorage(context), now, newId,
     async (sceneId: string): Promise<boolean> => {
       const all = await getAppServices().reminderService.findAll();
-      if (!all.success || all.data === undefined) { return false; }
+      // 读不到引用关系时按“仍被引用”处理，宁可拒绝改名/删除，也不要留下悬空围栏
+      if (!all.success || all.data === undefined) { return true; }
       let found: boolean = false;
       for (let i = 0; i < all.data.length; i++) {
         const reminder = all.data[i];
@@ -91,6 +93,10 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   });
   hilog.info(0x0000, 'ContextCue', 'AI provider: %{public}s',
     config === undefined ? 'Fake(dev fixtures)' : 'Zhipu(GLM)');
+  // 场景半径/坐标变化后，把该场景下 ACTIVE 的地点提醒重新注册到新围栏
+  sceneService.setGeometrySync(async (sceneId: string): Promise<boolean> => {
+    return await syncActiveLocationRemindersForScene(services.reminderService, sceneId);
+  });
   const port: ReminderAgentTimePort | undefined = timePorts.length > 0 ? timePorts[0] : undefined;
   if (port !== undefined) {
     // 启动对账：取消无效/重复的系统时间提醒，补排 ACTIVE，并恢复业务 id → 系统 id 的映射。
@@ -113,6 +119,24 @@ export function createIntegratedServices(config: AIProviderConfig | undefined,
   return services;
 }
 
+function reminderInput(reminder: Reminder): CreateReminderInput {
+  return {
+    content: reminder.content,
+    triggerType: reminder.triggerType,
+    triggerTime: reminder.triggerTime,
+    sceneId: reminder.sceneId,
+    sceneName: reminder.sceneName,
+    locationTriggerMode: reminder.locationTriggerMode,
+    source: reminder.source
+  };
+}
+
+function isActiveLocationReminder(reminder: Reminder): boolean {
+  return reminder.status === ReminderStatus.ACTIVE &&
+    (reminder.triggerType === TriggerType.LOCATION || reminder.triggerType === TriggerType.BOTH) &&
+    reminder.sceneId !== undefined && reminder.sceneId.trim() !== '';
+}
+
 async function reconcileLocationReminders(service: ReminderService): Promise<void> {
   const all = await service.findAll();
   if (!all.success || all.data === undefined) {
@@ -120,25 +144,36 @@ async function reconcileLocationReminders(service: ReminderService): Promise<voi
   }
   for (let i = 0; i < all.data.length; i++) {
     const reminder = all.data[i];
-    if (reminder.status !== ReminderStatus.ACTIVE ||
-      (reminder.triggerType !== TriggerType.LOCATION && reminder.triggerType !== TriggerType.BOTH) ||
-      reminder.sceneId === undefined || reminder.sceneId.trim() === '') {
+    if (!isActiveLocationReminder(reminder)) {
       continue;
     }
-    const input: CreateReminderInput = {
-      content: reminder.content,
-      triggerType: reminder.triggerType,
-      triggerTime: reminder.triggerTime,
-      sceneId: reminder.sceneId,
-      sceneName: reminder.sceneName,
-      locationTriggerMode: reminder.locationTriggerMode,
-      source: reminder.source
-    };
-    const result = await service.update(reminder.id, input);
+    const result = await service.update(reminder.id, reminderInput(reminder));
     if (!result.success) {
       // 权限/设备能力问题由用户下次进入编辑页时再处理，启动阶段不打断
       console.error('Location reminder re-register failed: ' +
         (result.error === undefined ? 'UNKNOWN' : result.error.code));
     }
   }
+}
+
+/** 场景几何变化后，只重注册该场景下的 ACTIVE 地点提醒，返回是否全部成功。 */
+async function syncActiveLocationRemindersForScene(service: ReminderService, sceneId: string): Promise<boolean> {
+  const all = await service.findAll();
+  if (!all.success || all.data === undefined) {
+    return false;
+  }
+  let synced: boolean = true;
+  for (let i = 0; i < all.data.length; i++) {
+    const reminder = all.data[i];
+    if (!isActiveLocationReminder(reminder) || reminder.sceneId !== sceneId) {
+      continue;
+    }
+    const result = await service.update(reminder.id, reminderInput(reminder));
+    if (!result.success) {
+      synced = false;
+      console.error('Scene geometry sync failed: ' +
+        (result.error === undefined ? 'UNKNOWN' : result.error.code));
+    }
+  }
+  return synced;
 }

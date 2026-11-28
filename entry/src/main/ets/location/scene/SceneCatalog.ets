@@ -145,6 +145,27 @@ export class SceneCatalog implements SceneResolver {
     });
   }
 
+  /**
+   * 修改名称/坐标/半径，且允许场景已被提醒引用。
+   *
+   * 调用方必须负责把该场景下已注册的围栏重新注册，否则系统围栏仍使用旧圆心/旧半径。
+   * 与 `update` 的区别只在于跳过 `requireMutable`；名称、坐标、半径仍走同一套校验。
+   */
+  async updateGeometry(id: string, input: SceneInput): Promise<Scene> {
+    const draft: SceneInput = { name: input.name, latitude: input.latitude, longitude: input.longitude, radius: input.radius };
+    validateInput(draft);
+    return this.exclusive(async (): Promise<Scene> => {
+      const scenes = await this.load();
+      const index = scenes.findIndex((scene: Scene) => scene.id === id);
+      if (index < 0) { throw new Error('SCENE_NOT_FOUND'); }
+      const next: Scene = { id: id, name: draft.name.trim(), latitude: draft.latitude,
+        longitude: draft.longitude, radius: draft.radius, createdAt: scenes[index].createdAt };
+      scenes[index] = next;
+      await this.save(scenes);
+      return copyScene(next);
+    });
+  }
+
   async update(id: string, input: SceneInput): Promise<Scene> {
     const draft: SceneInput = { name: input.name, latitude: input.latitude, longitude: input.longitude, radius: input.radius };
     validateInput(draft);
